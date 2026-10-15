@@ -69,6 +69,45 @@
   }
   .side button { padding: 0 10px; }
   .toolbar button:hover, .side button:hover { opacity: 1; background: rgba(127,127,127,.15); }
+  #clear { display: flex; align-items: center; }
+  #clear svg { display: block; }
+  #clear.bump svg { animation: bump .4s ease; }
+  @keyframes bump { 0%,100% { transform: none; } 30% { transform: scale(1.25) rotate(-8deg); } 60% { transform: scale(.95) rotate(5deg); } }
+  .caret {
+    position: absolute; left: 0; top: 0; width: 2px; border-radius: 1px;
+    background: var(--ink); pointer-events: none; z-index: 2; display: none;
+  }
+  .caret.blink { animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+  .paper.crumple { animation: crumple .55s cubic-bezier(.4,0,.6,1) forwards; pointer-events: none; }
+  .paper.crumple::after {
+    content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    background:
+      linear-gradient(112deg, transparent 0 18%, rgba(70,70,90,.28) 18.4%, transparent 19.4% 41%, rgba(255,255,255,.7) 41.2%, rgba(70,70,90,.22) 42.2%, transparent 43.2% 66%, rgba(70,70,90,.3) 66.3%, transparent 67.4%),
+      linear-gradient(28deg, transparent 0 27%, rgba(70,70,90,.24) 27.3%, transparent 28.2% 52%, rgba(255,255,255,.65) 52.2%, rgba(70,70,90,.2) 53.2%, transparent 54% 78%, rgba(70,70,90,.26) 78.3%, transparent 79.2%),
+      linear-gradient(160deg, transparent 0 35%, rgba(70,70,90,.2) 35.4%, transparent 36.4% 71%, rgba(255,255,255,.6) 71.2%, transparent 72.4%);
+    animation: creases .55s ease-in forwards;
+  }
+  @keyframes creases { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes crumple {
+    0%   { transform: none; filter: none;
+           clip-path: polygon(100% 50%,100% 75%,100% 100%,75% 100%,50% 100%,25% 100%,0 100%,0 75%,0 50%,0 25%,0 0,25% 0,50% 0,75% 0,100% 0,100% 25%); }
+    30%  { transform: scale(.8,.86) rotate(-5deg) skew(3deg,-2deg); filter: brightness(.96) contrast(1.06);
+           clip-path: polygon(94% 50%,95% 71%,92% 93%,73% 96%,50% 94%,29% 97%,6% 93%,4% 73%,5% 50%,3% 28%,7% 6%,26% 4%,50% 6%,72% 3%,93% 7%,96% 27%); }
+    65%  { transform: scale(calc(var(--s) * 2.4)) rotate(12deg) skew(-6deg,4deg); filter: brightness(.93) contrast(1.12);
+           clip-path: polygon(88% 50%,90% 68.3%,81.5% 81.5%,67.8% 88.8%,50% 88.6%,31.5% 90.5%,18.1% 81.9%,10.6% 68%,12% 50%,10% 31.7%,18.5% 18.5%,32.5% 11.7%,50% 12.6%,68.5% 9.5%,81.9% 18.1%,88.8% 32.2%); }
+    100% { transform: scale(var(--s)) rotate(26deg); filter: brightness(.9) contrast(1.18);
+           clip-path: polygon(80% 50%,83.3% 63.8%,69.1% 69.1%,63% 81.4%,50% 81%,35.8% 84.2%,30.2% 69.8%,17.7% 63.4%,20% 50%,16.7% 36.2%,30.9% 30.9%,37.4% 19.5%,50% 21%,64.2% 15.8%,69.8% 30.2%,81.4% 37%); }
+  }
+  #ball { position: fixed; z-index: 60; width: 150px; height: 150px; display: none; pointer-events: none; filter: drop-shadow(0 6px 8px rgba(0,0,0,.25)); }
+  #ball.fly { animation: ballfly .62s cubic-bezier(.5,0,.8,.6) forwards; }
+  @keyframes ballfly {
+    0%   { transform: translate(0,0) scale(1) rotate(0); }
+    35%  { transform: translate(calc(var(--bx) * .3), calc(var(--by) * .3 - 90px)) scale(.92) rotate(150deg); }
+    100% { transform: translate(var(--bx), var(--by)) scale(.16) rotate(470deg); opacity: .85; }
+  }
+  .paper.fresh { animation: fresh .4s ease-out; }
+  @keyframes fresh { from { transform: translateY(28px); opacity: 0; } to { transform: none; opacity: 1; } }
   @media (max-width: 900px) { .side { bottom: 72px; } }
   @media (max-width: 560px) {
     .toolbar, .side { font-size: 16px; }
@@ -119,15 +158,23 @@
     </svg>
   </div>
   <div class="stats" id="stats"></div>
+  <div class="caret" id="caret"></div>
   <textarea id="pad" spellcheck="false" autofocus aria-label="글 입력"></textarea>
 </div>
 
+<canvas id="ball" width="300" height="300"></canvas>
+
 <div class="toolbar">
+  <button id="freeBtn">종이 고정 켜짐</button>
   <button id="pencilBtn">연필 켜짐</button>
   <button id="sound">소리 켜짐</button>
   <button id="copy">복사</button>
   <button id="save">저장</button>
-  <button id="clear">지우기</button>
+  <button id="clear" aria-label="종이 버리기" title="종이 버리기">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path class="lid" d="M4 7h16M9 7V4.5h6V7"/><path d="M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/>
+    </svg>
+  </button>
 </div>
 
 <div class="side">
@@ -149,6 +196,9 @@
   const SPEEDS = [0.5, 0.75, 1, 1.5, 2, 3];
   let si = 2, userSpeed = 1;
   let pencilOn = true;
+  let freeMode = true;                 // 종이 고정 모드
+  let committed = [];                  // 종이 고정: 확정된 글자들 (좌표 고정)
+  let anchor = { row: 0, x: ML };      // 종이 고정: 지금 쓰고 있는 자리
   let layoutW = 0, layoutH = 0;
 
   // ───────── 획 데이터 (0~100 상자, 획순대로) ─────────
@@ -283,18 +333,19 @@
   };
 
   // ───────── 연필 소리: 선을 긋는 동안만 지속적으로 사각거림 ─────────
-  let actx = null, nGain, nBand, soundOn = store.get('sound') !== 'off';
+  let actx = null, nGain, nBand, noiseBuf = null, soundOn = store.get('sound') !== 'off';
   function audioInit() {
     if (actx) return;
     actx = new (window.AudioContext || window.webkitAudioContext)();
     const len = actx.sampleRate * 2;
     const buf = actx.createBuffer(1, len, actx.sampleRate);
+    noiseBuf = buf;
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     const src = actx.createBufferSource();
     src.buffer = buf; src.loop = true;
-    nBand = actx.createBiquadFilter(); nBand.type = 'bandpass'; nBand.frequency.value = 3200; nBand.Q.value = 0.8;
-    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1000;
+    nBand = actx.createBiquadFilter(); nBand.type = 'bandpass'; nBand.frequency.value = 1800; nBand.Q.value = 0.8;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 500;
     nGain = actx.createGain(); nGain.gain.value = 0;
     src.connect(nBand).connect(hp).connect(nGain).connect(actx.destination);
     src.start();
@@ -304,8 +355,46 @@
     const t = actx.currentTime;
     const g = (active && soundOn) ? (0.05 + Math.random() * 0.05) * intensity : 0;
     nGain.gain.setTargetAtTime(g, t, 0.015);
-    const f = low ? 900 + Math.random() * 900 : 2200 + Math.random() * 2600;
+    const f = low ? 500 + Math.random() * 600 : 1100 + Math.random() * 1500;
     if (active) nBand.frequency.setTargetAtTime(f, t, 0.02);
+  }
+
+  // 연필을 끈 상태: 키를 칠 때마다 짧게 사각거린다
+  function tick(kind) {
+    if (!actx || !soundOn || !noiseBuf) return;
+    const now = actx.currentTime;
+    const dur = kind === 'space' ? 0.14 : kind === 'erase' ? 0.11 : 0.05 + Math.random() * 0.06;
+    const vol = kind === 'erase' ? 0.09 : kind === 'space' ? 0.06 : 0.1 + Math.random() * 0.05;
+    const f = kind === 'erase' ? 700 : 1100 + Math.random() * 1300;
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf; src.playbackRate.value = 0.8 + Math.random() * 0.5;
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(f, now);
+    bp.frequency.linearRampToValueAtTime(f * (0.7 + Math.random() * 0.6), now + dur);
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 500;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(vol, now + dur * 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(bp).connect(hp).connect(g).connect(actx.destination);
+    src.start(now, Math.random() * 0.5, dur + 0.02);
+  }
+  // 종이 구기는 소리
+  function crumpleSound() {
+    if (!actx || !soundOn || !noiseBuf) return;
+    const now = actx.currentTime, dur = 0.72;
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 0.5;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0, now);
+    for (let t = 0.03; t < dur; t += 0.03) {
+      const loud = Math.random() < 0.35 ? 0.02 : 0.08 + Math.random() * 0.14;
+      g.gain.linearRampToValueAtTime(loud * (1 - t / dur * 0.5), now + t);
+    }
+    g.gain.linearRampToValueAtTime(0, now + dur + 0.04);
+    src.connect(bp).connect(g).connect(actx.destination);
+    src.start(now); src.stop(now + dur + 0.06);
   }
 
   // ───────── 획 / 슬롯 관리 ─────────
@@ -349,6 +438,7 @@
       batch.items.push({ kind: 'stroke', st });
       return;
     }
+    if (!pencilOn) { st.hi.remove(); st.ld.remove(); return; }
     st.hi.parentNode && st.hi.classList.add('fade');
     st.ld.classList.add('fade');
     setTimeout(() => { st.hi.remove(); st.ld.remove(); }, 220);
@@ -459,6 +549,7 @@
     for (const r of Object.keys(slot.jamo)) killJamo(slot.jamo[r]);
     killText(slot);
     if (batch) { batch.after.push(() => slot.g.remove()); return; }
+    if (!pencilOn) { slot.g.remove(); return; }
     slot.g.classList.add('fade');
     setTimeout(() => slot.g.remove(), 220);
   }
@@ -517,7 +608,7 @@
   function layout(instant) {
     const W = paper.clientWidth / Z;      // 확대할수록 한 줄에 들어가는 폭(단위)이 줄어든다
     const maxX = W - ML - 28;
-    let x = 0, row = 0;
+    let x = freeMode ? anchor.x - ML : 0, row = freeMode ? anchor.row : 0;
     starts = []; ends = [];
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
@@ -543,13 +634,24 @@
     }
     endB = { row, x: ML + x };
     rowsUsed = row + 1;
+    if (freeMode) {                       // 확정된 글자는 제자리에 고정
+      for (const sl of committed) {
+        const adv = advance(sl.ch);
+        sl.ox = sl.fx + (adv - G) / 2; sl.oy = rowY(sl.frow); sl.row = sl.frow;
+        sl.nx = sl.fx + adv; sl.ny = sl.oy + G * 0.55;
+        const sig = sl.ox + '|' + sl.oy + '|' + Z + '|' + sl.key;
+        if (instant || sl.sig !== sig) { sl.sig = sig; applyGeometry(sl, instant); }
+        if (sl.frow + 1 > rowsUsed) rowsUsed = sl.frow + 1;
+      }
+    }
     const H = Math.max(rowsUsed * LH + MT + 60, (window.innerHeight - 110) / Z);
     layoutW = W; layoutH = H;
     board.setAttribute('height', H * Z);
     board.setAttribute('viewBox', `0 0 ${W} ${H}`);
     sizeGrainMask(W, H);
     drawRules(W, H);
-    if (queue.length === 0 && pen.mode === 'idle' && slots.length === 0) restPen();
+    if (queue.length === 0 && pen.mode === 'idle' && slots.length === 0 && !freeMode) restPen();
+    updateCaret();
   }
 
   function drawRules(W, H) {
@@ -612,10 +714,10 @@
     prevChars = nc;
     const b = batch; batch = null;
     if (b) finalizeBatch(b);
-    layout(false);
+    layout(!pencilOn);
     // 지운 뒤에는 연필이 캐럿 자리로 돌아온다 (꾹 누르는 중에는 지우개가 계속 쓸고 간다)
     if (b && !b.fast) queue.push({ kind: 'move', caret: true, dead: false });
-    if (!pencilOn && !instant) ensureVisible(caretXY(activeCaret()).y);   // 연필을 꺼도 화면은 따라간다
+    if (!pencilOn && !instant) ensureVisible(endPos().y);   // 연필을 꺼도 화면은 따라간다
     updateStats(nc);
   }
 
@@ -623,7 +725,10 @@
   const pen = { x: ML, y: MT + LH * 0.7, mode: 'idle', task: null, t0: 0, dur: 0,
                 fx: 0, fy: 0, tx: 0, ty: 0, len: 0, lift: 0, erasing: false };
   // 연필을 "다음에 쓸 자리"로 (확대/축소·리사이즈 후, 처음 상태)
-  function endPos() { return caretXY(activeCaret()); }
+  function endPos() {
+    if (freeMode) return { x: endB.x, y: rowY(endB.row) + G * 0.55 };
+    return caretXY(activeCaret());
+  }
   function restPen() { const p = endPos(); pen.x = p.x; pen.y = p.y; }
   const smooth = t => t * t * (3 - 2 * t);
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -774,10 +879,15 @@
   requestAnimationFrame(frame);
 
   // ───────── 글자 수 ─────────
-  function updateStats(chars) {
-    let n = 0;
-    for (const c of chars) if (!/\s/.test(c)) n++;
-    stats.textContent = `공백 제외 ${n}자 · 공백 포함 ${chars.length}자`;
+  function allItems() { return freeMode ? committed.concat(slots) : slots; }
+  function updateStats() {
+    let n = 0, total = 0;
+    for (const sl of allItems()) {
+      if (!sl.ch) continue;
+      total++;
+      if (sl.ch.trim()) n++;
+    }
+    stats.textContent = `공백 제외 ${n}자 · 공백 포함 ${total}자`;
   }
 
   // ───────── 선택 / 캐럿 ─────────
@@ -795,6 +905,20 @@
     onCaret();
   }
 
+  // 연필을 끈 상태의 깜빡이는 텍스트 커서
+  const caretEl = $('caret');
+  function updateCaret() {
+    const show = !pencilOn && document.activeElement === pad && (freeMode || pad.selectionStart === pad.selectionEnd);
+    caretEl.style.display = show ? 'block' : 'none';
+    if (!show) { caretEl.classList.remove('blink'); return; }
+    const b = freeMode ? endB : caretBound(cpIdx(pad.selectionEnd));
+    caretEl.style.transform = `translate(${(b.x * Z).toFixed(1)}px,${((rowY(b.row) + G * 0.06) * Z).toFixed(1)}px)`;
+    caretEl.style.height = (G * 0.88 * Z).toFixed(1) + 'px';
+    caretEl.classList.remove('blink'); void caretEl.offsetWidth; caretEl.classList.add('blink');
+  }
+  pad.addEventListener('focus', updateCaret);
+  pad.addEventListener('blur', updateCaret);
+
   let selSlots = [];
   function renderSel() {
     for (const sl of selSlots) sl.g.classList.remove('sel');
@@ -808,6 +932,8 @@
   // 글은 그대로인데 캐럿/선택만 바뀌면 연필이 그 자리로 따라간다
   function onCaret() {
     renderSel();
+    updateCaret();
+    if (freeMode) return;
     const sig = sigNow();
     if (sig === lastSig) return;
     lastSig = sig;
@@ -835,6 +961,12 @@
   pad.addEventListener('pointerdown', e => {
     audioInit();
     if (e.button !== 0) return;
+    if (freeMode) {      // 종이 위 어디를 눌러도 그 자리에서 쓴다
+      const r = board.getBoundingClientRect();
+      pad.focus();
+      moveFree(Math.max(0, Math.floor(((e.clientY - r.top) / Z - MT) / LH)), (e.clientX - r.left) / Z);
+      return;
+    }
     const i = hit(e);
     dragAnchor = e.shiftKey ? anchorIdx() : i;
     pad.focus();
@@ -844,6 +976,7 @@
   window.addEventListener('pointermove', e => { if (dragging) setSel(dragAnchor, hit(e)); });
   window.addEventListener('pointerup', () => { dragging = false; });
   pad.addEventListener('dblclick', e => {
+    if (freeMode) return;
     const i = hit(e), ch = prevChars, n = ch.length;
     const isW = c => c !== undefined && !/\s/.test(c);
     let a = i, b = i;
@@ -852,31 +985,58 @@
     if (a !== b) setSel(a, b);
   });
 
-  // 방향키: 위/아래/Home/End는 화면에 보이는 줄 기준으로 이동
-  function moveTo(idx, extend) {
-    setSel(extend ? anchorIdx() : idx, idx);
+  // 방향키/단축키: 줄 단위 동작은 화면에 보이는 줄 기준으로 직접 처리
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  function moveTo(idx, extend) { setSel(extend ? anchorIdx() : idx, idx); }
+  function lineEdge(cur, toStart) {
+    const row = caretBound(cur).row;
+    const rowC = candidates().filter(c => c.row === row);
+    if (!rowC.length) return cur;
+    rowC.sort((p, q) => toStart ? (p.x - q.x || p.idx - q.idx) : (q.x - p.x || p.idx - q.idx));
+    return rowC[0].idx;
+  }
+  // 스페이스로 구분된 한 묶음 단위
+  function wordEdge(cur, dir) {
+    const ch = prevChars, ws = c => /\s/.test(c);
+    let i = cur;
+    if (dir > 0) { while (i < ch.length && ws(ch[i])) i++; while (i < ch.length && !ws(ch[i])) i++; }
+    else { while (i > 0 && ws(ch[i - 1])) i--; while (i > 0 && !ws(ch[i - 1])) i--; }
+    return i;
+  }
+  function applyDelete(a, b) {
+    pad.setRangeText('', u16(a), u16(b), 'end');
+    sync(pad.value, false, true, false);
+    lastSig = sigNow();
+    renderSel(); updateCaret();
+    store.set('text', pad.value);
+    if (!pencilOn) tick('erase');
   }
   pad.addEventListener('keydown', e => {
     if (e.isComposing) return;
+    if (freeMode) { freeKey(e); return; }
     const cur = activeCaret();
+    const lineMod = isMac && e.metaKey;                 // 맥: ⌘ = 줄
+    const wordMod = isMac ? e.altKey : e.ctrlKey;       // 맥: ⌥ / 윈도우: Ctrl = 한 묶음
+    let idx = null;
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      const b = caretBound(cur), row = b.row + (e.key === 'ArrowUp' ? -1 : 1);
-      let idx;
-      if (row < 0) idx = 0;
-      else if (row > endB.row) idx = slots.length;
-      else idx = nearest(row, b.x);
-      moveTo(idx, e.shiftKey);
-    } else if ((e.key === 'Home' || e.key === 'End') && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      const row = caretBound(cur).row;
-      const rowC = candidates().filter(c => c.row === row);
-      if (rowC.length) {
-        const home = e.key === 'Home';
-        rowC.sort((p, q) => home ? (p.x - q.x || p.idx - q.idx) : (q.x - p.x || p.idx - q.idx));
-        moveTo(rowC[0].idx, e.shiftKey);
+      const up = e.key === 'ArrowUp';
+      if (lineMod) idx = up ? 0 : slots.length;
+      else if (!e.altKey && !e.ctrlKey && !e.metaKey) {
+        const b = caretBound(cur), row = b.row + (up ? -1 : 1);
+        idx = row < 0 ? 0 : row > endB.row ? slots.length : nearest(row, b.x);
       }
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const left = e.key === 'ArrowLeft';
+      if (lineMod) idx = lineEdge(cur, left);
+      else if (wordMod) idx = wordEdge(cur, left ? -1 : 1);
+    } else if ((e.key === 'Home' || e.key === 'End') && !e.ctrlKey && !e.metaKey) {
+      idx = lineEdge(cur, e.key === 'Home');
+    } else if (e.key === 'Backspace' && lineMod && pad.selectionStart === pad.selectionEnd) {
+      const a = lineEdge(cur, true);
+      if (a < cur) { e.preventDefault(); applyDelete(a, cur); }
+      return;
     }
+    if (idx !== null) { e.preventDefault(); moveTo(idx, e.shiftKey); }
   });
 
   // ───────── 입력 ─────────
@@ -892,10 +1052,26 @@
     if (actx && actx.state === 'suspended') actx.resume();
     const isDel = delKey || (e.inputType || '').startsWith('delete');
     const fast = isDel && (delRepeat || pen.erasing || queue.some(q => q.kind === 'erase'));
-    sync(pad.value, false, isDel, fast);
+    if (freeMode) {
+      const v = pad.value, nl = v.indexOf('\n');
+      if (nl >= 0) {      // 줄바꿈이 섞여 들어온 경우: 앞부분을 확정하고 다음 줄에서 이어 쓴다
+        sync(v.slice(0, nl), false, false, false);
+        const row = endB.row + 1;
+        commitRun();
+        anchor = { row, x: ML };
+        const tail = v.slice(nl + 1).replace(/\n/g, '');
+        pad.value = tail;
+        if (tail) sync(tail, false, false, false);
+        layout(false);
+      } else sync(v, false, isDel, fast);
+    } else sync(pad.value, false, isDel, fast);
     lastSig = sigNow();
-    renderSel();
-    store.set('text', pad.value);
+    renderSel(); updateCaret();
+    if (!pencilOn) {
+      const t = e.inputType || '';
+      tick(isDel ? 'erase' : (t === 'insertLineBreak' || e.data === ' ') ? 'space' : 'write');
+    }
+    persist();
   });
   window.addEventListener('resize', () => { layout(true); if (pen.mode === 'idle' && !queue.length) restPen(); });
 
@@ -936,8 +1112,153 @@
       restPen();
       pencil.style.display = ''; eraser.style.display = 'none';
     }
+    updateCaret();
   }
   $('pencilBtn').addEventListener('click', () => { setPencil(!pencilOn); pad.focus(); });
+
+  // ───────── 종이 고정 모드 ─────────
+  // 글자는 (줄, x) 좌표에 고정되고 서로 밀지 않는다. 겹쳐 써도 그대로 겹친다.
+  function cellOf(sl) {
+    return sl.free ? { x: sl.fx, row: sl.frow } : { x: sl.ox - (advance(sl.ch) - G) / 2, row: sl.row };
+  }
+  // 지금 쓰던 묶음을 제자리에 확정하고 입력 버퍼를 비운다
+  function commitRun() {
+    if (!freeMode || !slots.length) return;
+    const e = { row: endB.row, x: endB.x };
+    for (const sl of slots) {
+      const c = cellOf(sl);
+      sl.fx = c.x; sl.frow = c.row; sl.free = true;
+      if (sl.move) { sl.move.dead = true; sl.move = null; }
+      committed.push(sl);
+    }
+    slots = []; prevChars = [];
+    pad.value = '';
+    anchor = e;
+    layout(false);
+  }
+  function moveFree(row, x) {
+    const limit = layoutW - 28;
+    x = Math.round(Math.max(8, Math.min(limit - 10, x)) / 2) * 2;
+    commitRun();
+    anchor = { row: Math.max(0, row), x };
+    if (pencilOn) {
+      for (let i = queue.length - 1; i >= 0; i--) if (queue[i].caret) queue.splice(i, 1);
+      queue.push({ kind: 'move', caret: true, dead: false });
+    }
+    layout(false);
+    updateCaret();
+    persist();
+  }
+  // 캐럿 왼쪽(dir<0) / 오른쪽(dir>0)에 걸친 글자를 겹친 것까지 모두 지운다
+  function freeErase(dir, fast, wholeLeft) {
+    commitRun();
+    const row = anchor.row, p = anchor.x;
+    const adv = sl => advance(sl.ch);
+    const covers = q => committed.filter(sl => sl.frow === row && sl.fx <= q && q < sl.fx + adv(sl));
+    let targets;
+    if (wholeLeft) targets = committed.filter(sl => sl.frow === row && sl.fx < p - 0.5);
+    else {
+      targets = covers(dir < 0 ? p - 1 : p + 1);
+      if (!targets.length && dir < 0) {      // 바로 왼쪽이 비어 있으면 가장 가까운 글자를 찾는다
+        let best = -Infinity;
+        for (const sl of committed) {
+          const r = sl.fx + adv(sl);
+          if (sl.frow === row && r <= p && r > best) best = r;
+        }
+        if (best > -Infinity && p - best < 80) targets = covers(best - 1);
+      }
+    }
+    if (!targets.length) { if (dir < 0) moveFree(row, p - 25); return; }
+    const b = pencilOn ? { items: [], after: [], fast: !!fast } : null;
+    batch = b;
+    for (const sl of targets) { committed.splice(committed.indexOf(sl), 1); removeSlot(sl); }
+    batch = null;
+    if (b) finalizeBatch(b);
+    anchor = { row, x: dir < 0 ? Math.min(...targets.map(sl => sl.fx)) : p };
+    if (pencilOn && !fast) {
+      for (let i = queue.length - 1; i >= 0; i--) if (queue[i].caret) queue.splice(i, 1);
+      queue.push({ kind: 'move', caret: true, dead: false });
+    }
+    layout(false);
+    if (!pencilOn) tick('erase');
+    updateStats(); updateCaret(); persist();
+  }
+  function freeKey(e) {
+    const cmd = isMac && e.metaKey;
+    const rowEnd = r => committed.reduce((m, sl) => sl.frow === r ? Math.max(m, sl.fx + advance(sl.ch)) : m, ML);
+    const k = e.key;
+    if (k === 'ArrowLeft') { e.preventDefault(); moveFree(endB.row, cmd ? ML : endB.x - 25); }
+    else if (k === 'ArrowRight') { e.preventDefault(); moveFree(endB.row, cmd ? rowEnd(endB.row) : endB.x + 25); }
+    else if (k === 'ArrowUp') { e.preventDefault(); moveFree(endB.row - 1, endB.x); }
+    else if (k === 'ArrowDown') { e.preventDefault(); moveFree(endB.row + 1, endB.x); }
+    else if (k === 'Home') { e.preventDefault(); moveFree(endB.row, ML); }
+    else if (k === 'End') { e.preventDefault(); moveFree(endB.row, rowEnd(endB.row)); }
+    else if (k === 'Enter') { e.preventDefault(); moveFree(endB.row + 1, ML); }
+    else if (k === 'Backspace' && pad.value === '') { e.preventDefault(); freeErase(-1, e.repeat, cmd); }
+    else if (k === 'Delete') { e.preventDefault(); freeErase(1, e.repeat, false); }
+  }
+  // 좌표로 흩어진 글자를 읽는 순서(위→아래, 왼쪽→오른쪽)의 글로 바꾼다
+  function freeText() {
+    const items = allItems().map((sl, i) => ({ sl, i, ...cellOf(sl) })).filter(o => o.sl.ch && o.sl.ch !== '\n');
+    items.sort((a, b) => a.row - b.row || a.x - b.x || a.i - b.i);
+    const lines = [];
+    let curRow = 0, line = '', cur = ML;
+    for (const o of items) {
+      while (curRow < o.row) { lines.push(line); line = ''; cur = ML; curRow++; }
+      if (o.x > cur + 11) { line += ' '.repeat(Math.round((o.x - cur) / 22)); cur = o.x; }
+      line += o.sl.ch;
+      cur = Math.max(cur, o.x + advance(o.sl.ch));
+    }
+    lines.push(line);
+    return lines.map(l => l.replace(/\s+$/, '')).join('\n').replace(/^\n+/, '');
+  }
+  function persist() {
+    store.set('mode', freeMode ? 'free' : 'memo');
+    if (freeMode) {
+      const items = allItems().filter(sl => sl.ch && sl.ch !== '\n').map(sl => {
+        const c = cellOf(sl);
+        return [sl.ch, Math.round(c.x * 10) / 10, c.row];
+      });
+      store.set('items', JSON.stringify(items));
+    } else store.set('text', pad.value);
+  }
+  function setFree(on) {
+    if (on === freeMode) return;
+    for (const sl of selSlots) sl.g.classList.remove('sel');
+    selSlots = [];
+    if (on) {            // 메모 → 종이 고정: 지금 보이는 배치를 그대로 굳힌다
+      const frozen = [];
+      for (const sl of slots) {
+        if (sl.ch === '\n') { sl.g.remove(); continue; }
+        const c = cellOf(sl);
+        sl.fx = c.x; sl.frow = c.row; sl.free = true;
+        frozen.push(sl);
+      }
+      const e = { row: endB.row, x: endB.x };
+      committed = frozen; slots = []; prevChars = [];
+      pad.value = '';
+      anchor = e;
+      freeMode = true;
+    } else {             // 종이 고정 → 메모: 읽는 순서대로 글을 이어 붙여 다시 흘려 쓴다
+      commitRun();
+      const text = freeText();
+      queue.length = 0; tweens.clear();
+      glyphs.replaceChildren();
+      committed = []; slots = []; prevChars = [];
+      pen.mode = 'idle'; pen.erasing = false;
+      eraser.style.display = 'none'; if (pencilOn) pencil.style.display = '';
+      freeMode = false;
+      pad.value = text;
+      sync(text, true);
+      pad.setSelectionRange(pad.value.length, pad.value.length);
+      lastSig = sigNow();
+    }
+    $('freeBtn').textContent = freeMode ? '종이 고정 켜짐' : '종이 고정 꺼짐';
+    layout(true);
+    restPen();
+    updateStats(); updateCaret(); persist();
+  }
+  $('freeBtn').addEventListener('click', () => { setFree(!freeMode); pad.focus(); });
 
   // ───────── PNG 저장 ─────────
   const loadImg = src => new Promise((res, rej) => {
@@ -977,7 +1298,7 @@
       if (document.fonts) await document.fonts.ready;
       ctx.fillStyle = '#34343b'; ctx.globalAlpha = 0.9;
       ctx.font = `${38 * S}px "Yeon Sung", cursive`;
-      for (const sl of slots) if (sl.text) ctx.fillText(sl.text.ch, sl.text.x * S, sl.text.y * S);
+      for (const sl of allItems()) if (sl.text) ctx.fillText(sl.text.ch, sl.text.x * S, sl.text.y * S);
       ctx.globalAlpha = 1;
 
       const blob = await new Promise(r => c.toBlob(r, 'image/png'));
@@ -1006,38 +1327,111 @@
   });
   $('copy').addEventListener('click', async (e) => {
     const b = e.currentTarget, old = b.textContent;
-    try { await navigator.clipboard.writeText(pad.value); }
-    catch { pad.select(); document.execCommand('copy'); }
+    const text = freeMode ? freeText() : pad.value;
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
     b.textContent = '복사됨'; setTimeout(() => { b.textContent = old; }, 1200);
     pad.focus();
   });
 
-  // 지우기: 앱 안에서 두 번 눌러 확인 (브라우저 confirm은 막히는 환경이 있음)
-  let clearTimer = 0;
+  // 지우기: 종이를 구겨서 쓰레기통으로 버린다
   function clearAll() {
-    queue.length = 0;
+    queue.length = 0; tweens.clear();
+    glyphs.replaceChildren();                       // 이전 글씨가 잠깐이라도 남지 않게 즉시 비운다
+    board.querySelectorAll('defs clipPath').forEach(c => c.remove());
+    slots = []; committed = []; prevChars = []; selSlots = [];
     pad.value = '';
-    sync('', true);
+    anchor = { row: 0, x: ML };
     pen.mode = 'idle'; pen.erasing = false;
     eraser.style.display = 'none';
     if (pencilOn) pencil.style.display = '';
+    layout(true);
     restPen();
-    store.set('text', '');
     lastSig = sigNow();
-    renderSel();
+    updateStats(); updateCaret(); persist();
   }
-  $('clear').addEventListener('click', e => {
-    const b = e.currentTarget;
-    if (!pad.value) { pad.focus(); return; }
-    if (!clearTimer) {
-      b.textContent = '한 번 더';
-      clearTimer = setTimeout(() => { clearTimer = 0; b.textContent = '지우기'; }, 2500);
-      return;
+
+  // 구겨진 종이 덩어리: 면마다 밝기가 다른 다각형으로 그린다
+  function drawBall(cv) {
+    const c = cv.getContext('2d'), W = cv.width, cx = W / 2, cy = W / 2, R = W * 0.4;
+    c.clearRect(0, 0, W, W);
+    const rings = [{ n: 1, r: 0 }, { n: 6, r: 0.3 }, { n: 11, r: 0.55 }, { n: 17, r: 0.8 }, { n: 24, r: 1 }];
+    const pts = rings.map((rg, ri) => Array.from({ length: rg.n }, (_, k) => {
+      const a = (k / rg.n) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const rr = rg.r === 0 ? 0 : R * rg.r * (ri === 4 ? 0.78 + Math.random() * 0.37 : 0.8 + Math.random() * 0.4);
+      return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr };
+    }));
+    const tris = [];
+    for (let k = 0; k < 6; k++) tris.push([pts[0][0], pts[1][k], pts[1][(k + 1) % 6]]);
+    for (let ri = 1; ri < 4; ri++) {
+      const A = pts[ri], B = pts[ri + 1];
+      let i = 0, j = 0;
+      while (i < A.length || j < B.length) {
+        const stepA = i < A.length && (j >= B.length || (i + 1) / A.length <= (j + 1) / B.length);
+        if (stepA) { tris.push([A[i % A.length], A[(i + 1) % A.length], B[j % B.length]]); i++; }
+        else { tris.push([A[i % A.length], B[j % B.length], B[(j + 1) % B.length]]); j++; }
+      }
     }
-    clearTimeout(clearTimer); clearTimer = 0;
-    b.textContent = '지우기';
-    clearAll();
-    pad.focus();
+    c.lineJoin = 'round';
+    for (const t of tris) {
+      const mx = (t[0].x + t[1].x + t[2].x) / 3 - cx, my = (t[0].y + t[1].y + t[2].y) / 3 - cy;
+      const len = Math.hypot(mx, my) || 1;
+      const lit = 0.76 + 0.2 * -((mx / len) * 0.6 + (my / len) * 0.8) * Math.min(1, len / R) + (Math.random() - 0.5) * 0.55;
+      const l = Math.max(0.42, Math.min(1, lit));
+      c.fillStyle = `rgb(${Math.round(212 * l + 38)},${Math.round(213 * l + 39)},${Math.round(226 * l + 30)})`;
+      c.strokeStyle = 'rgba(70,75,95,.2)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(t[0].x, t[0].y); c.lineTo(t[1].x, t[1].y); c.lineTo(t[2].x, t[2].y); c.closePath();
+      c.fill(); c.stroke();
+    }
+    for (let k = 0; k < 9; k++) {          // 접힌 자국
+      const a = Math.random() * Math.PI * 2, b = a + Math.PI * (0.6 + Math.random() * 0.8);
+      const r1 = R * (0.3 + Math.random() * 0.6), r2 = R * (0.3 + Math.random() * 0.6);
+      c.strokeStyle = Math.random() < 0.5 ? 'rgba(60,65,85,.22)' : 'rgba(255,255,255,.5)';
+      c.lineWidth = 1 + Math.random() * 1.4;
+      c.beginPath(); c.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      c.lineTo(cx + Math.cos(b) * r2, cy + Math.sin(b) * r2); c.stroke();
+    }
+  }
+
+  let trashing = false;
+  const clearBtn = $('clear'), ball = $('ball');
+  clearBtn.addEventListener('click', () => {
+    if (trashing) return;
+    if (!allItems().length) { clearBtn.classList.add('bump'); setTimeout(() => clearBtn.classList.remove('bump'), 400); pad.focus(); return; }
+    trashing = true;
+    audioInit();
+    const r = paper.getBoundingClientRect(), t = clearBtn.getBoundingClientRect();
+    const oy = Math.max(0, Math.min(r.height, window.innerHeight / 2 - r.top));   // 화면 중앙에서 구긴다
+    const cx = r.left + r.width / 2, cy = r.top + oy;
+    paper.style.transformOrigin = `50% ${oy}px`;
+    paper.style.setProperty('--s', String(Math.min(1, 150 / r.width)));
+    paper.classList.add('crumple');
+    crumpleSound();
+    setTimeout(() => {                         // 구겨진 덩어리가 쓰레기통으로 날아간다
+      drawBall(ball);
+      ball.style.left = (cx - 75) + 'px'; ball.style.top = (cy - 75) + 'px';
+      ball.style.setProperty('--bx', (t.left + t.width / 2 - cx) + 'px');
+      ball.style.setProperty('--by', (t.top + t.height / 2 - cy) + 'px');
+      ball.style.display = 'block';
+      ball.classList.remove('fly'); void ball.offsetWidth; ball.classList.add('fly');
+      paper.style.visibility = 'hidden';       // 안 보이는 사이에 비우고 새 종이를 준비한다
+      paper.classList.remove('crumple');
+      paper.style.transformOrigin = '';
+      clearAll();
+    }, 560);
+    setTimeout(() => {
+      ball.style.display = 'none'; ball.classList.remove('fly');
+      paper.style.visibility = '';
+      paper.classList.add('fresh');
+      clearBtn.classList.add('bump');
+      setTimeout(() => {
+        paper.classList.remove('fresh'); clearBtn.classList.remove('bump');
+        trashing = false; pad.focus();
+      }, 420);
+    }, 560 + 640);
   });
 
   // 디버깅/테스트용
@@ -1072,13 +1466,31 @@
   pencilOn = store.get('pencil') !== 'off';
   $('pencilBtn').textContent = pencilOn ? '연필 켜짐' : '연필 꺼짐';
   if (!pencilOn) { pencil.style.display = 'none'; }
-  const saved = store.get('text') || '';
-  pad.value = saved;
-  pad.setSelectionRange(pad.value.length, pad.value.length);
-  layout(true);
-  sync(saved, true);
+  const savedMode = store.get('mode');
+  let savedItems = null;
+  try { savedItems = JSON.parse(store.get('items') || 'null'); } catch {}
+  if (savedMode !== 'memo' && Array.isArray(savedItems)) {
+    for (const it of savedItems) {              // 종이 고정: 저장된 좌표 그대로 복원
+      const sl = setSlot(null, it[0], true);
+      sl.fx = it[1]; sl.frow = it[2]; sl.free = true;
+      committed.push(sl);
+    }
+    pad.value = '';
+    layout(true);
+  } else {
+    const saved = store.get('text') || '';      // 메모 글(또는 이전 버전 글): 흘려 쓴 뒤 필요하면 종이에 고정
+    freeMode = false;
+    pad.value = saved;
+    pad.setSelectionRange(pad.value.length, pad.value.length);
+    layout(true);
+    sync(saved, true);
+    if (savedMode !== 'memo') setFree(true);
+  }
+  $('freeBtn').textContent = freeMode ? '종이 고정 켜짐' : '종이 고정 꺼짐';
   lastSig = sigNow();
   restPen();
+  updateStats();
+  updateCaret();
   document.fonts && document.fonts.ready.then(() => layout(true));
 })();
 </script>
