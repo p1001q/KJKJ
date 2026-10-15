@@ -69,6 +69,13 @@
   }
   .side button { padding: 0 10px; }
   .toolbar button:hover, .side button:hover { opacity: 1; background: rgba(127,127,127,.15); }
+  .menuWrap { position: relative; }
+  .menu {
+    position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%);
+    display: none; flex-direction: column; gap: 2px; padding: 4px;
+    background: rgba(248,244,234,.98); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  }
+  .menu.open { display: flex; }
   #clear { display: flex; align-items: center; }
   #clear svg { display: block; }
   #clear.bump svg { animation: bump .4s ease; }
@@ -168,7 +175,13 @@
   <button id="freeBtn">종이 고정 켜짐</button>
   <button id="pencilBtn">연필 켜짐</button>
   <button id="sound">소리 켜짐</button>
-  <button id="copy">복사</button>
+  <div class="menuWrap">
+    <button id="copy">복사</button>
+    <div class="menu" id="copyMenu">
+      <button id="copyText">글 복사</button>
+      <button id="copyImg">이미지 복사</button>
+    </div>
+  </div>
   <button id="save">저장</button>
   <button id="clear" aria-label="종이 버리기" title="종이 버리기">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -191,14 +204,23 @@
   const MT = 10;         // 위쪽 여백
   const NS = 'http://www.w3.org/2000/svg';
   const numRe = /-?\d*\.?\d+/g;
+  // 이모지(❤️, 1️⃣, 👨‍👩‍👧 …)는 여러 코드포인트가 한 글자이므로 자소 단위로 쪼갠다
+  const segmenter = (typeof Intl !== 'undefined' && Intl.Segmenter) ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  const chars = t => segmenter ? Array.from(segmenter.segment(t), x => x.segment) : Array.from(t);
+  const EMOJI_RE = /\p{Extended_Pictographic}|\u20E3/u;
+  const isEmoji = ch => EMOJI_RE.test(ch) && !/^[\u00A9\u00AE\u2122]\uFE0F?$/.test(ch);
+  const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
   const ZOOMS = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 1.8];
   let zi = 3, Z = 1;
   const SPEEDS = [0.5, 0.75, 1, 1.5, 2, 3];
   let si = 2, userSpeed = 1;
   let pencilOn = true;
+  let grainUrl = '';
   let freeMode = true;                 // 종이 고정 모드
   let committed = [];                  // 종이 고정: 확정된 글자들 (좌표 고정)
   let anchor = { row: 0, x: ML };      // 종이 고정: 지금 쓰고 있는 자리
+  let freeSel = [];                    // 종이 고정: 선택된 글자들
+  let selAnchor = null;                // 선택을 시작한 자리
   let layoutW = 0, layoutH = 0;
 
   // ───────── 획 데이터 (0~100 상자, 획순대로) ─────────
@@ -316,6 +338,7 @@
   function advance(ch) {
     if (ch === '\n') return 0;
     if (ch === ' ') return 22;
+    if (isEmoji(ch)) return 46;
     return ch.codePointAt(0) >= 0x2E80 ? 50 : 28;
   }
 
@@ -518,11 +541,17 @@
       clip.append(rect);
       board.querySelector('defs').append(clip);
       const group = el('g', { 'clip-path': `url(#${id})` });
-      const text = el('text', { 'font-family': 'Yeon Sung, cursive', 'font-size': 38, fill: '#34343b' });
-      text.textContent = ch;
+      const emoji = isEmoji(ch);
+      // 텍스트 모양(❤, ⚠ …)으로 나오는 기호도 항상 컬러 이모지로 통일한다
+      const display = emoji && ch.length === 1 ? ch + '\uFE0F' : ch;
+      const text = el('text', {
+        'font-family': emoji ? EMOJI_FONT : 'Yeon Sung, cursive',
+        'font-size': emoji ? 34 : 38, fill: '#34343b',
+      });
+      text.textContent = display;
       group.append(text);
       slot.g.append(group);
-      slot.text = { kind: 'text', ch, group, clip, rect, node: text, x: 0, y: 0, w: advance(ch), prog: 0, dead: false };
+      slot.text = { kind: 'text', ch, display, emoji, group, clip, rect, node: text, x: 0, y: 0, w: advance(ch), prog: 0, dead: false };
       if (instant) rect.setAttribute('width', 200); else queue.push(slot.text);
       return slot;
     }
@@ -698,7 +727,7 @@
   function sync(text, instant, isDelete, fast) {
     const animate = pencilOn && !instant;
     batch = (isDelete && animate) ? { items: [], after: [], fast: !!fast } : null;
-    const nc = Array.from(text), oc = prevChars;
+    const nc = chars(text), oc = prevChars;
     let p = 0;
     while (p < nc.length && p < oc.length && nc[p] === oc[p]) p++;
     let s = 0;
@@ -892,7 +921,7 @@
 
   // ───────── 선택 / 캐럿 ─────────
   function u16(i) { return prevChars.slice(0, i).join('').length; }
-  function cpIdx(u) { return Array.from(pad.value.slice(0, u)).length; }
+  function cpIdx(u) { return chars(pad.value.slice(0, u)).length; }
   function activeCaret() {
     return cpIdx(pad.selectionDirection === 'backward' ? pad.selectionStart : pad.selectionEnd);
   }
@@ -964,7 +993,7 @@
     if (freeMode) {      // 종이 위 어디를 눌러도 그 자리에서 쓴다
       const r = board.getBoundingClientRect();
       pad.focus();
-      moveFree(Math.max(0, Math.floor(((e.clientY - r.top) / Z - MT) / LH)), (e.clientX - r.left) / Z);
+      moveFree(Math.max(0, Math.floor(((e.clientY - r.top) / Z - MT) / LH)), (e.clientX - r.left) / Z, e.shiftKey);
       return;
     }
     const i = hit(e);
@@ -1015,7 +1044,7 @@
     if (e.isComposing) return;
     if (freeMode) { freeKey(e); return; }
     const cur = activeCaret();
-    const lineMod = isMac && e.metaKey;                 // 맥: ⌘ = 줄
+    const lineMod = isMac && (e.metaKey || e.ctrlKey);  // 맥: ⌘/Ctrl = 줄
     const wordMod = isMac ? e.altKey : e.ctrlKey;       // 맥: ⌥ / 윈도우: Ctrl = 한 묶음
     let idx = null;
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -1041,6 +1070,19 @@
 
   // ───────── 입력 ─────────
   pad.addEventListener('keydown', audioInit, { once: true });
+  // 선택한 글자 위에 입력(붙여넣기 포함)하면 선택이 지워지고 그 자리에서 이어진다
+  pad.addEventListener('beforeinput', e => {
+    if (freeMode && freeSel.length && /^insert/.test(e.inputType || '')) freeEraseSelection();
+  });
+  pad.addEventListener('copy', e => {
+    if (freeMode && freeSel.length) { e.preventDefault(); e.clipboardData.setData('text/plain', freeText(freeSel)); }
+  });
+  pad.addEventListener('cut', e => {
+    if (freeMode && freeSel.length) {
+      e.preventDefault(); e.clipboardData.setData('text/plain', freeText(freeSel));
+      freeEraseSelection();
+    }
+  });
   let delKey = false, delRepeat = false;
   pad.addEventListener('keydown', e => {
     if (e.key === 'Backspace' || e.key === 'Delete') { delKey = true; delRepeat = e.repeat; }
@@ -1136,11 +1178,31 @@
     anchor = e;
     layout(false);
   }
-  function moveFree(row, x) {
+  // 읽는 순서(줄 → x) 기준 [a, b) 범위의 글자를 선택
+  const posKey = (row, x) => row * 100000 + x;
+  function setFreeSel(arr) {
+    for (const sl of freeSel) sl.g.classList.remove('sel');
+    freeSel = arr;
+    for (const sl of freeSel) sl.g.classList.add('sel');
+  }
+  function clearFreeSel() { selAnchor = null; if (freeSel.length) setFreeSel([]); }
+  function freeSelect(a, b) {
+    const lo = Math.min(posKey(a.row, a.x), posKey(b.row, b.x));
+    const hi = Math.max(posKey(a.row, a.x), posKey(b.row, b.x));
+    setFreeSel(committed.filter(sl => {
+      const k = posKey(sl.frow, sl.fx + advance(sl.ch) / 2);
+      return k >= lo && k < hi;
+    }));
+  }
+
+  function moveFree(row, x, extend) {
     const limit = layoutW - 28;
     x = Math.round(Math.max(8, Math.min(limit - 10, x)) / 2) * 2;
+    if (extend) { if (!selAnchor) selAnchor = { row: endB.row, x: endB.x }; }
+    else clearFreeSel();
     commitRun();
     anchor = { row: Math.max(0, row), x };
+    if (extend) freeSelect(selAnchor, anchor);
     if (pencilOn) {
       for (let i = queue.length - 1; i >= 0; i--) if (queue[i].caret) queue.splice(i, 1);
       queue.push({ kind: 'move', caret: true, dead: false });
@@ -1148,6 +1210,37 @@
     layout(false);
     updateCaret();
     persist();
+  }
+
+  // 글자들을 지운다 (연필이 켜져 있으면 지우개로)
+  function removeGlyphs(targets, fast, newAnchor) {
+    const b = pencilOn ? { items: [], after: [], fast: !!fast } : null;
+    batch = b;
+    for (const sl of targets) {
+      const i = committed.indexOf(sl);
+      if (i >= 0) committed.splice(i, 1);
+      removeSlot(sl);
+    }
+    batch = null;
+    if (b) finalizeBatch(b);
+    if (newAnchor) anchor = newAnchor;
+    if (pencilOn && !fast) {
+      for (let i = queue.length - 1; i >= 0; i--) if (queue[i].caret) queue.splice(i, 1);
+      queue.push({ kind: 'move', caret: true, dead: false });
+    }
+    layout(false);
+    if (!pencilOn) tick('erase');
+    updateStats(); updateCaret(); persist();
+  }
+  function freeEraseSelection(fast) {
+    if (!freeSel.length) return false;
+    commitRun();
+    const targets = freeSel.slice();
+    clearFreeSel();
+    let first = targets[0];
+    for (const sl of targets) if (posKey(sl.frow, sl.fx) < posKey(first.frow, first.fx)) first = sl;
+    removeGlyphs(targets, fast, { row: first.frow, x: first.fx });
+    return true;
   }
   // 캐럿 왼쪽(dir<0) / 오른쪽(dir>0)에 걸친 글자를 겹친 것까지 모두 지운다
   function freeErase(dir, fast, wholeLeft) {
@@ -1169,37 +1262,51 @@
       }
     }
     if (!targets.length) { if (dir < 0) moveFree(row, p - 25); return; }
-    const b = pencilOn ? { items: [], after: [], fast: !!fast } : null;
-    batch = b;
-    for (const sl of targets) { committed.splice(committed.indexOf(sl), 1); removeSlot(sl); }
-    batch = null;
-    if (b) finalizeBatch(b);
-    anchor = { row, x: dir < 0 ? Math.min(...targets.map(sl => sl.fx)) : p };
-    if (pencilOn && !fast) {
-      for (let i = queue.length - 1; i >= 0; i--) if (queue[i].caret) queue.splice(i, 1);
-      queue.push({ kind: 'move', caret: true, dead: false });
+    removeGlyphs(targets, fast, { row, x: dir < 0 ? Math.min(...targets.map(sl => sl.fx)) : p });
+  }
+  // 캐럿 줄에서 글자 덩어리(간격 11 이하로 이어진 글자들)의 끝으로
+  function clusterEdge(dir) {
+    const row = endB.row, p = endB.x;
+    const spans = committed.filter(sl => sl.frow === row && sl.ch.trim())
+      .map(sl => [sl.fx, sl.fx + advance(sl.ch)]).sort((a, b) => a[0] - b[0]);
+    const m = [];
+    for (const sp of spans) {
+      if (m.length && sp[0] <= m[m.length - 1][1] + 11) m[m.length - 1][1] = Math.max(m[m.length - 1][1], sp[1]);
+      else m.push([sp[0], sp[1]]);
     }
-    layout(false);
-    if (!pencilOn) tick('erase');
-    updateStats(); updateCaret(); persist();
+    if (dir > 0) { for (const c of m) if (c[1] > p + 1) return c[1]; return layoutW; }
+    for (let i = m.length - 1; i >= 0; i--) if (m[i][0] < p - 1) return m[i][0];
+    return ML;
   }
   function freeKey(e) {
-    const cmd = isMac && e.metaKey;
+    const k = e.key, shift = e.shiftKey;
+    const line = e.metaKey || e.ctrlKey;      // ⌘ / Ctrl: 캐럿 기준 줄 처음·끝
+    const word = e.altKey;                    // ⌥ / Alt: 글자 덩어리 단위
     const rowEnd = r => committed.reduce((m, sl) => sl.frow === r ? Math.max(m, sl.fx + advance(sl.ch)) : m, ML);
-    const k = e.key;
-    if (k === 'ArrowLeft') { e.preventDefault(); moveFree(endB.row, cmd ? ML : endB.x - 25); }
-    else if (k === 'ArrowRight') { e.preventDefault(); moveFree(endB.row, cmd ? rowEnd(endB.row) : endB.x + 25); }
-    else if (k === 'ArrowUp') { e.preventDefault(); moveFree(endB.row - 1, endB.x); }
-    else if (k === 'ArrowDown') { e.preventDefault(); moveFree(endB.row + 1, endB.x); }
-    else if (k === 'Home') { e.preventDefault(); moveFree(endB.row, ML); }
-    else if (k === 'End') { e.preventDefault(); moveFree(endB.row, rowEnd(endB.row)); }
-    else if (k === 'Enter') { e.preventDefault(); moveFree(endB.row + 1, ML); }
-    else if (k === 'Backspace' && pad.value === '') { e.preventDefault(); freeErase(-1, e.repeat, cmd); }
-    else if (k === 'Delete') { e.preventDefault(); freeErase(1, e.repeat, false); }
+    const row = endB.row, x = endB.x;
+    if (line && (k === 'a' || k === 'A') && !shift) {      // 전체 선택
+      e.preventDefault();
+      commitRun();
+      selAnchor = null;
+      setFreeSel(committed.filter(sl => sl.ch.trim()));
+      return;
+    }
+    if (k === 'ArrowLeft') { e.preventDefault(); moveFree(row, line ? ML : word ? clusterEdge(-1) : x - 25, shift); }
+    else if (k === 'ArrowRight') { e.preventDefault(); moveFree(row, line ? rowEnd(row) : word ? clusterEdge(1) : x + 25, shift); }
+    else if (k === 'ArrowUp') { e.preventDefault(); moveFree(row - 1, x, shift); }
+    else if (k === 'ArrowDown') { e.preventDefault(); moveFree(row + 1, x, shift); }
+    else if (k === 'Home') { e.preventDefault(); moveFree(row, ML, shift); }
+    else if (k === 'End') { e.preventDefault(); moveFree(row, rowEnd(row), shift); }
+    else if (k === 'Enter') { e.preventDefault(); moveFree(row + 1, ML); }
+    else if (k === 'Backspace' || k === 'Delete') {
+      if (freeSel.length) { e.preventDefault(); freeEraseSelection(e.repeat); }
+      else if (k === 'Delete') { e.preventDefault(); freeErase(1, e.repeat, false); }
+      else if (pad.value === '') { e.preventDefault(); freeErase(-1, e.repeat, line); }
+    }
   }
   // 좌표로 흩어진 글자를 읽는 순서(위→아래, 왼쪽→오른쪽)의 글로 바꾼다
-  function freeText() {
-    const items = allItems().map((sl, i) => ({ sl, i, ...cellOf(sl) })).filter(o => o.sl.ch && o.sl.ch !== '\n');
+  function freeText(list) {
+    const items = (list || allItems()).map((sl, i) => ({ sl, i, ...cellOf(sl) })).filter(o => o.sl.ch && o.sl.ch !== '\n');
     items.sort((a, b) => a.row - b.row || a.x - b.x || a.i - b.i);
     const lines = [];
     let curRow = 0, line = '', cur = ML;
@@ -1224,6 +1331,7 @@
   }
   function setFree(on) {
     if (on === freeMode) return;
+    clearFreeSel();
     for (const sl of selSlots) sl.g.classList.remove('sel');
     selSlots = [];
     if (on) {            // 메모 → 종이 고정: 지금 보이는 배치를 그대로 굳힌다
@@ -1260,48 +1368,64 @@
   }
   $('freeBtn').addEventListener('click', () => { setFree(!freeMode); pad.focus(); });
 
-  // ───────── PNG 저장 ─────────
+  // ───────── 이미지 만들기 / 저장 / 복사 ─────────
   const loadImg = src => new Promise((res, rej) => {
     const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src;
   });
+  // 지금 종이의 마지막 상태를 PNG로 렌더한다 (배율·모드·애니메이션 진행 상태와 무관하게)
+  async function renderPng() {
+    const W = layoutW;
+    const H = Math.min(layoutH, Math.max((rowsUsed + 1) * LH + MT + 10, 5 * LH + MT + 10));
+    let S = Math.max(1.5, 2 * Z);
+    S = Math.min(S, 8000 / W, 12000 / H);                 // 캔버스 한계를 넘지 않게
+    const clone = glyphs.cloneNode(true);
+    clone.querySelectorAll('g[clip-path]').forEach(n => n.remove());       // 영문·이모지는 캔버스에서 따로
+    clone.querySelectorAll('.fade,.erasing').forEach(n => n.remove());     // 지워지는 중인 획 제외
+    clone.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
+    clone.querySelectorAll('.lead,.hi').forEach(n => { n.style.strokeDashoffset = '0'; });
+    const css = '.lead{fill:none;stroke:#34343b;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round}' +
+      '.hi{fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transform:translate(.9px,.9px)}' +
+      '.rule{stroke:rgba(110,130,160,.38);stroke-width:1}.margin{stroke:rgba(210,110,110,.38);stroke-width:1}';
+    const defs = `<pattern id="grainPat" patternUnits="userSpaceOnUse" width="128" height="128">` +
+      `<image width="128" height="128" href="${grainUrl}" xlink:href="${grainUrl}"/></pattern>` +
+      `<mask id="grainMask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">` +
+      `<rect width="${W}" height="${H}" fill="url(#grainPat)"/></mask>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+      `width="${W * S}" height="${H * S}" viewBox="0 0 ${W} ${H}"><style>${css}</style><defs>${defs}</defs>` +
+      `<g>${rules.innerHTML}</g>${new XMLSerializer().serializeToString(clone)}</svg>`;
+    const img = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+
+    const c = document.createElement('canvas');
+    c.width = Math.round(W * S); c.height = Math.round(H * S);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f8f4ea'; ctx.fillRect(0, 0, c.width, c.height);
+    try {
+      const m = /url\(["']?(.*?)["']?\)$/.exec(getComputedStyle(paper).backgroundImage);
+      if (m) {
+        const noise = await loadImg(m[1].replace(/\\"/g, '"'));
+        ctx.fillStyle = ctx.createPattern(noise, 'repeat'); ctx.fillRect(0, 0, c.width, c.height);
+      }
+    } catch {}
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+
+    if (document.fonts) { try { await document.fonts.ready; } catch {} }
+    for (const sl of allItems()) {
+      const t = sl.text;
+      if (!t) continue;
+      ctx.globalAlpha = t.emoji ? 1 : 0.9;
+      ctx.fillStyle = '#34343b';
+      ctx.font = t.emoji ? `${34 * S}px ${EMOJI_FONT}` : `${38 * S}px "Yeon Sung", cursive`;
+      ctx.fillText(t.display, t.x * S, t.y * S);
+    }
+    ctx.globalAlpha = 1;
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('이미지를 만들지 못했습니다');
+    return blob;
+  }
   async function savePng(btn) {
     const old = btn.textContent;
     try {
-      const W = layoutW;
-      const H = Math.min(layoutH, Math.max((rowsUsed + 1) * LH + MT + 10, 5 * LH + MT + 10));
-      const S = Math.max(1.5, 2 * Z);
-      const clone = glyphs.cloneNode(true);
-      clone.querySelectorAll('g[clip-path]').forEach(n => n.remove());   // 영문 등은 캔버스에서 따로
-      clone.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
-      clone.querySelectorAll('.lead,.hi').forEach(n => { n.style.strokeDashoffset = '0'; n.classList.remove('fade', 'erasing'); });
-      const css = '.lead{fill:none;stroke:#34343b;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round}' +
-        '.hi{fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transform:translate(.9px,.9px)}' +
-        '.rule{stroke:rgba(110,130,160,.38);stroke-width:1}.margin{stroke:rgba(210,110,110,.38);stroke-width:1}';
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W * S}" height="${H * S}" viewBox="0 0 ${W} ${H}">` +
-        `<style>${css}</style><defs>${board.querySelector('defs').innerHTML}</defs>` +
-        `<g>${rules.innerHTML}</g>${new XMLSerializer().serializeToString(clone)}</svg>`;
-      const img = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
-
-      const c = document.createElement('canvas');
-      c.width = Math.round(W * S); c.height = Math.round(H * S);
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = '#f8f4ea'; ctx.fillRect(0, 0, c.width, c.height);
-      try {
-        const m = /url\(["']?(.*?)["']?\)$/.exec(getComputedStyle(paper).backgroundImage);
-        if (m) {
-          const noise = await loadImg(m[1].replace(/\\"/g, '"'));
-          ctx.fillStyle = ctx.createPattern(noise, 'repeat'); ctx.fillRect(0, 0, c.width, c.height);
-        }
-      } catch {}
-      ctx.drawImage(img, 0, 0, c.width, c.height);
-
-      if (document.fonts) await document.fonts.ready;
-      ctx.fillStyle = '#34343b'; ctx.globalAlpha = 0.9;
-      ctx.font = `${38 * S}px "Yeon Sung", cursive`;
-      for (const sl of allItems()) if (sl.text) ctx.fillText(sl.text.ch, sl.text.x * S, sl.text.y * S);
-      ctx.globalAlpha = 1;
-
-      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const blob = await renderPng();
       const d = new Date(), z = n => String(n).padStart(2, '0');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -1325,24 +1449,40 @@
     if (!soundOn) penSound(false);
     pad.focus();
   });
-  $('copy').addEventListener('click', async (e) => {
-    const b = e.currentTarget, old = b.textContent;
-    const text = freeMode ? freeText() : pad.value;
+  // 복사: 글 / 이미지 두 가지
+  const copyMenu = $('copyMenu');
+  $('copy').addEventListener('click', e => { e.stopPropagation(); copyMenu.classList.toggle('open'); });
+  document.addEventListener('click', () => copyMenu.classList.remove('open'));
+  async function copyText(btn) {
+    const old = btn.textContent, text = freeMode ? freeText() : pad.value;
     try { await navigator.clipboard.writeText(text); }
     catch {
       const ta = document.createElement('textarea');
       ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove();
     }
-    b.textContent = '복사됨'; setTimeout(() => { b.textContent = old; }, 1200);
-    pad.focus();
-  });
+    btn.textContent = '복사됨'; setTimeout(() => { btn.textContent = old; }, 1200);
+  }
+  async function copyImage(btn) {
+    const old = btn.textContent;
+    try {
+      const blob = await renderPng();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      btn.textContent = '복사됨';
+    } catch (err) {
+      console.error(err);
+      btn.textContent = '복사 실패';
+    }
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  }
+  $('copyText').addEventListener('click', e => { copyText(e.currentTarget); copyMenu.classList.remove('open'); pad.focus(); });
+  $('copyImg').addEventListener('click', e => { copyImage(e.currentTarget); copyMenu.classList.remove('open'); pad.focus(); });
 
   // 지우기: 종이를 구겨서 쓰레기통으로 버린다
   function clearAll() {
     queue.length = 0; tweens.clear();
     glyphs.replaceChildren();                       // 이전 글씨가 잠깐이라도 남지 않게 즉시 비운다
     board.querySelectorAll('defs clipPath').forEach(c => c.remove());
-    slots = []; committed = []; prevChars = []; selSlots = [];
+    slots = []; committed = []; prevChars = []; selSlots = []; freeSel = []; selAnchor = null;
     pad.value = '';
     anchor = { row: 0, x: ML };
     pen.mode = 'idle'; pen.erasing = false;
@@ -1354,20 +1494,24 @@
     updateStats(); updateCaret(); persist();
   }
 
-  // 구겨진 종이 덩어리: 면마다 밝기가 다른 다각형으로 그린다
-  function drawBall(cv) {
+  // 구겨진 종이 덩어리 (면의 명암으로 주름을 표현). 두 가지 모양 중 하나를 무작위로 쓴다.
+  //  0: 작은 면이 많은 잔주름 / 1: 큰 면이 접힌 굵은 주름. 둘 다 명암은 연하게.
+  function drawBall(cv, variant) {
     const c = cv.getContext('2d'), W = cv.width, cx = W / 2, cy = W / 2, R = W * 0.4;
+    const V = variant === 0
+      ? { n: [1, 5, 9, 14, 20], r: [0, 0.3, 0.55, 0.8, 1], lo: 0.87, spread: 0.1, rand: 0.2, edge: 0.06, folds: 0 }
+      : { n: [1, 5, 8, 13, 18], r: [0, 0.3, 0.56, 0.8, 1], lo: 0.8, spread: 0.16, rand: 0.28, edge: 0.05, folds: 2 };
     c.clearRect(0, 0, W, W);
-    const rings = [{ n: 1, r: 0 }, { n: 6, r: 0.3 }, { n: 11, r: 0.55 }, { n: 17, r: 0.8 }, { n: 24, r: 1 }];
-    const pts = rings.map((rg, ri) => Array.from({ length: rg.n }, (_, k) => {
-      const a = (k / rg.n) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-      const rr = rg.r === 0 ? 0 : R * rg.r * (ri === 4 ? 0.78 + Math.random() * 0.37 : 0.8 + Math.random() * 0.4);
+    const rings = V.n.map((n, ri) => Array.from({ length: n }, (_, k) => {
+      const a = (k / n) * Math.PI * 2 + (Math.random() - 0.5) * (variant === 0 ? 0.5 : 0.7);
+      const jr = ri === V.n.length - 1 ? (variant === 0 ? 0.82 + Math.random() * 0.3 : 0.72 + Math.random() * 0.42) : 0.8 + Math.random() * 0.4;
+      const rr = ri === 0 ? 0 : R * V.r[ri] * jr;
       return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr };
     }));
     const tris = [];
-    for (let k = 0; k < 6; k++) tris.push([pts[0][0], pts[1][k], pts[1][(k + 1) % 6]]);
-    for (let ri = 1; ri < 4; ri++) {
-      const A = pts[ri], B = pts[ri + 1];
+    for (let k = 0; k < V.n[1]; k++) tris.push([rings[0][0], rings[1][k], rings[1][(k + 1) % V.n[1]]]);
+    for (let ri = 1; ri < V.n.length - 1; ri++) {
+      const A = rings[ri], B = rings[ri + 1];
       let i = 0, j = 0;
       while (i < A.length || j < B.length) {
         const stepA = i < A.length && (j >= B.length || (i + 1) / A.length <= (j + 1) / B.length);
@@ -1376,24 +1520,51 @@
       }
     }
     c.lineJoin = 'round';
+    // 바깥 윤곽은 부드럽게 둥글린다 (뾰족한 모서리 방지)
+    const outer = rings[rings.length - 1], on = outer.length;
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    c.save();
+    c.beginPath();
+    const m0 = mid(outer[on - 1], outer[0]);
+    c.moveTo(m0.x, m0.y);
+    for (let i = 0; i < on; i++) {
+      const m = mid(outer[i], outer[(i + 1) % on]);
+      c.quadraticCurveTo(outer[i].x, outer[i].y, m.x, m.y);
+    }
+    c.closePath();
+    c.clip();
     for (const t of tris) {
       const mx = (t[0].x + t[1].x + t[2].x) / 3 - cx, my = (t[0].y + t[1].y + t[2].y) / 3 - cy;
       const len = Math.hypot(mx, my) || 1;
-      const lit = 0.76 + 0.2 * -((mx / len) * 0.6 + (my / len) * 0.8) * Math.min(1, len / R) + (Math.random() - 0.5) * 0.55;
-      const l = Math.max(0.42, Math.min(1, lit));
-      c.fillStyle = `rgb(${Math.round(212 * l + 38)},${Math.round(213 * l + 39)},${Math.round(226 * l + 30)})`;
-      c.strokeStyle = 'rgba(70,75,95,.2)'; c.lineWidth = 1;
+      // 왼쪽 위에서 빛이 오고, 면마다 조금씩 다르게
+      const lit = 0.93 - V.spread * (0.5 + 0.5 * ((mx / len) * 0.6 + (my / len) * 0.8) * Math.min(1, len / R))
+                  + (Math.random() - 0.5) * V.rand;
+      const l = Math.max(V.lo, Math.min(1, lit));
+      const col = k => `rgb(${Math.round(244 * k)},${Math.round(244 * k)},${Math.round(251 * k)})`;
+      if (variant === 1) {          // 큰 면: 부드러운 그라데이션
+        const g = c.createLinearGradient(t[0].x, t[0].y, mx + cx, my + cy);
+        g.addColorStop(0, col(Math.min(1, l + 0.05))); g.addColorStop(1, col(Math.max(V.lo - 0.04, l - 0.07)));
+        c.fillStyle = g;
+      } else c.fillStyle = col(l);
+      c.strokeStyle = `rgba(80,86,110,${V.edge})`; c.lineWidth = 1;
       c.beginPath(); c.moveTo(t[0].x, t[0].y); c.lineTo(t[1].x, t[1].y); c.lineTo(t[2].x, t[2].y); c.closePath();
       c.fill(); c.stroke();
     }
-    for (let k = 0; k < 9; k++) {          // 접힌 자국
+    // 가장자리·아래쪽을 살짝 어둡게 (덩어리 느낌), 이미 그려진 면 위에만
+    c.globalCompositeOperation = 'source-atop';
+    const rg = c.createRadialGradient(cx - R * 0.25, cy - R * 0.3, R * 0.2, cx, cy, R * 1.15);
+    rg.addColorStop(0, 'rgba(90,96,125,0)'); rg.addColorStop(1, 'rgba(90,96,125,.16)');
+    c.fillStyle = rg; c.fillRect(0, 0, W, W);
+    c.globalCompositeOperation = 'source-over';
+    for (let k = 0; k < V.folds; k++) {      // 접힌 자국은 아주 옅게
       const a = Math.random() * Math.PI * 2, b = a + Math.PI * (0.6 + Math.random() * 0.8);
-      const r1 = R * (0.3 + Math.random() * 0.6), r2 = R * (0.3 + Math.random() * 0.6);
-      c.strokeStyle = Math.random() < 0.5 ? 'rgba(60,65,85,.22)' : 'rgba(255,255,255,.5)';
-      c.lineWidth = 1 + Math.random() * 1.4;
+      const r1 = R * (0.25 + Math.random() * 0.5), r2 = R * (0.25 + Math.random() * 0.5);
+      c.strokeStyle = Math.random() < 0.5 ? 'rgba(70,75,100,.1)' : 'rgba(255,255,255,.45)';
+      c.lineWidth = 1.2 + Math.random() * 1.2;
       c.beginPath(); c.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
       c.lineTo(cx + Math.cos(b) * r2, cy + Math.sin(b) * r2); c.stroke();
     }
+    c.restore();
   }
 
   let trashing = false;
@@ -1411,7 +1582,7 @@
     paper.classList.add('crumple');
     crumpleSound();
     setTimeout(() => {                         // 구겨진 덩어리가 쓰레기통으로 날아간다
-      drawBall(ball);
+      drawBall(ball, Math.random() < 0.5 ? 0 : 1);
       ball.style.left = (cx - 75) + 'px'; ball.style.top = (cy - 75) + 'px';
       ball.style.setProperty('--bx', (t.left + t.width / 2 - cx) + 'px');
       ball.style.setProperty('--by', (t.top + t.height / 2 - cy) + 'px');
@@ -1435,7 +1606,7 @@
   });
 
   // 디버깅/테스트용
-  window.__ssg = { sync, pad, pen, queue, setPencil };
+  window.__ssg = { sync, pad, pen, queue, setPencil, renderPng, drawBall };
 
   // ───────── 흑연 입자 텍스처 (한 번만 생성) ─────────
   (function initGrain() {
@@ -1448,10 +1619,8 @@
       im.data[i * 4 + 3] = 85 + Math.random() * 170;
     }
     g.putImageData(im, 0, 0);
-    const url = c.toDataURL();
-    const img = $('grainImg');
-    img.setAttribute('href', url);
-    img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', url);
+    grainUrl = c.toDataURL();
+    $('grainImg').setAttribute('href', grainUrl);
   })();
 
   // ───────── 시작 ─────────
