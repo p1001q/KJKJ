@@ -80,6 +80,11 @@
     background: rgba(248,244,234,.98); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
   }
   .menu.open { display: flex; }
+  .toolbar .tbtn { display: flex; align-items: center; padding: 4px 9px; }
+  /* 켜진 도구: 눌려 있는 것처럼 */
+  .toolbar .tbtn.active { opacity: 1; background: rgba(70,56,30,.2); box-shadow: inset 0 2px 4px rgba(40,30,10,.35), inset 0 -1px 0 rgba(255,255,255,.5); }
+  .sep { width: 1px; height: 24px; background: rgba(0,0,0,.14); margin: 0 6px; }
+  .paper.drawing #pad { cursor: none; }
   #clear { display: flex; align-items: center; }
   #clear svg { display: block; }
   #clear.bump svg { animation: bump .4s ease; }
@@ -134,6 +139,7 @@
     </defs>
     <g id="rules"></g>
     <g id="glyphs" mask="url(#grainMask)"></g>
+    <g id="drawing" mask="url(#grainMask)"></g>
   </svg>
   <div id="tools">
     <svg id="penTool" class="tool" width="1" height="1">
@@ -168,6 +174,17 @@
 <canvas id="ball" width="300" height="300"></canvas>
 
 <div class="toolbar">
+  <button id="toolPencil" class="tbtn" aria-pressed="false" title="그림 그리기 (연필)" aria-label="그림 연필">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z"/><path d="M14.5 6.5l3 3"/>
+    </svg>
+  </button>
+  <button id="toolEraser" class="tbtn" aria-pressed="false" title="그림 지우개" aria-label="그림 지우개">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M8.5 19.5h11M5.2 15.6l8.6-8.6a2 2 0 0 1 2.8 0l2.4 2.4a2 2 0 0 1 0 2.8L12 19.5H8.6l-3.4-3.4a1.1 1.1 0 0 1 0-1.5z"/><path d="M10.5 9.8l5.7 5.7"/>
+    </svg>
+  </button>
+  <div class="sep"></div>
   <button id="freeBtn">자유 배치 켜짐</button>
   <button id="pencilBtn">연필 켜짐</button>
   <button id="sound">소리 켜짐</button>
@@ -914,7 +931,7 @@
       if (k >= 1) { st.anim = null; tweens.delete(st); }
     }
 
-    if (pencilOn) {
+    if (pencilOn && !drawTool) {
       if (pen.erasing && pen.mode === 'idle' && pen.eraserHideAt && now > pen.eraserHideAt && !queue.length) {
         pen.erasing = false; pen.eraserHideAt = 0;
         eraser.style.display = 'none'; pencil.style.display = '';
@@ -992,7 +1009,8 @@
     }
 
     // 선을 긋는(또는 지우는) 중이 아니면 소리는 반드시 끈다
-    if (soundActive && !(pencilOn && pen.mode === 'draw')) { penSound(false); soundActive = false; }
+    const drawingNow = drawTool && pressed && performance.now() - lastDrawMove < 100;
+    if (soundActive && !(pencilOn && !drawTool && pen.mode === 'draw') && !drawingNow) { penSound(false); soundActive = false; }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -1028,7 +1046,7 @@
   // 연필을 끈 상태의 깜빡이는 텍스트 커서
   const caretEl = $('caret');
   function updateCaret() {
-    const show = !pencilOn && document.activeElement === pad && (freeMode || pad.selectionStart === pad.selectionEnd);
+    const show = !pencilOn && !drawTool && document.activeElement === pad && (freeMode || pad.selectionStart === pad.selectionEnd);
     caretEl.style.display = show ? 'block' : 'none';
     if (!show) { caretEl.classList.remove('blink'); return; }
     const b = freeMode ? endB : caretBound(cpIdx(pad.selectionEnd));
@@ -1080,7 +1098,7 @@
   pad.addEventListener('mousedown', e => e.preventDefault());   // 기본 캐럿/선택 대신 직접 처리
   pad.addEventListener('pointerdown', e => {
     audioInit();
-    if (e.button !== 0) return;
+    if (e.button !== 0 || drawTool) return;
     if (freeMode) {      // 종이 위 어디를 눌러도 그 자리에서 쓴다
       const r = board.getBoundingClientRect();
       pad.focus();
@@ -1132,7 +1150,7 @@
     if (!pencilOn) tick('erase');
   }
   pad.addEventListener('keydown', e => {
-    if (e.isComposing) return;
+    if (e.isComposing || drawTool) return;
     if (freeMode) { freeKey(e); return; }
     const cur = activeCaret();
     const lineMod = isMac && (e.metaKey || e.ctrlKey);  // 맥: ⌘/Ctrl = 줄
@@ -1459,6 +1477,185 @@
   }
   $('freeBtn').addEventListener('click', () => { setFree(!freeMode); pad.focus(); });
 
+  // ───────── 그림 그리기: 글자와 별개의 레이어 ─────────
+  // 연필을 고르면 글씨 쓰는 연필이 마우스 포인터가 되고, 연필 끝이 닿은 곳에서 그려진다 (글쓰기는 잠시 멈춘다).
+  // 선 굵기는 글씨와 같다(.lead). 좌표는 종이 단위라 확대/축소해도 제자리에 있다.
+  const drawing = $('drawing');
+  let drawTool = null;                 // null | 'pencil' | 'eraser'
+  let strokesDraw = [];                // [{ pts: [[x, y]...], hi, ld }]
+  let curStroke = null, pressed = false, lastDrawMove = 0, lastMoveAt = 0;
+  let mouseUnits = { x: 0, y: 0 }, mouseIn = false;
+  const ERASE_R = 16;                  // 지우개 반경(종이 단위)
+  const r1 = v => Math.round(v * 10) / 10;
+
+  function pathOf(pts) {
+    if (pts.length === 1) return `M${pts[0][0]} ${pts[0][1]}l0.01 0`;
+    let d = `M${pts[0][0]} ${pts[0][1]}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+      d += `Q${pts[i][0]} ${pts[i][1]} ${r1(mx)} ${r1(my)}`;
+    }
+    const l = pts[pts.length - 1];
+    return d + `L${l[0]} ${l[1]}`;
+  }
+  function makeStroke(pts) {
+    const hi = el('path', { class: 'hi' }), ld = el('path', { class: 'lead' });
+    ld.style.opacity = (0.82 + Math.random() * 0.18).toFixed(2);
+    drawing.append(hi, ld);
+    const st = { pts, hi, ld, bb: bbOf(pts) };
+    const d = pathOf(pts);
+    hi.setAttribute('d', d); ld.setAttribute('d', d);
+    strokesDraw.push(st);
+    return st;
+  }
+  function bbOf(pts) {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    return { x0, y0, x1, y1 };
+  }
+  function updateStroke(st) {
+    st.bb = bbOf(st.pts);
+    const d = pathOf(st.pts);
+    st.hi.setAttribute('d', d); st.ld.setAttribute('d', d);
+  }
+  function removeStroke(st) {
+    st.hi.remove(); st.ld.remove();
+    const i = strokesDraw.indexOf(st);
+    if (i >= 0) strokesDraw.splice(i, 1);
+  }
+  // 지우개가 닿은 점을 빼고 선을 나눈다
+  function eraseAt(x, y) {
+    for (const st of strokesDraw.slice()) {
+      const b = st.bb;
+      if (x < b.x0 - ERASE_R || x > b.x1 + ERASE_R || y < b.y0 - ERASE_R || y > b.y1 + ERASE_R) continue;
+      const hit = st.pts.map(p => Math.hypot(p[0] - x, p[1] - y) <= ERASE_R);
+      if (!hit.some(Boolean)) continue;
+      removeStroke(st);
+      let run = [];
+      const flush = () => { if (run.length >= 2) makeStroke(run); run = []; };
+      st.pts.forEach((p, i) => { if (hit[i]) flush(); else run.push(p); });
+      flush();
+    }
+  }
+  function saveDrawing() {
+    store.set('drawing', JSON.stringify(strokesDraw.map(st => st.pts)));
+  }
+  function loadDrawing() {
+    try {
+      const arr = JSON.parse(store.get('drawing') || '[]');
+      if (Array.isArray(arr)) for (const pts of arr) if (Array.isArray(pts) && pts.length) makeStroke(pts);
+    } catch {}
+  }
+  function clearDrawing() {
+    drawing.replaceChildren();
+    strokesDraw = []; curStroke = null;
+    saveDrawing();
+  }
+
+  const unitsOf = e => {
+    const r = board.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / Z, y: (e.clientY - r.top) / Z };
+  };
+  // 포인터 위치에 도구를 놓는다 (도구의 끝이 정확히 포인터 지점)
+  function placeDrawTool() {
+    if (!drawTool) return;
+    const pen_ = drawTool === 'pencil';
+    const node = pen_ ? pencil : eraser, other = pen_ ? eraser : pencil;
+    other.style.display = 'none';
+    node.style.display = mouseIn ? '' : 'none';
+    const lift = pressed ? 0 : 1;                       // 누르지 않으면 살짝 들려 있다
+    placeTool(node, mouseUnits.x, mouseUnits.y - lift * 5);
+    if (pen_) pshadow.setAttribute('transform', `translate(${10 + lift * 6},${8 + lift * 6})`);
+    else eshadow.setAttribute('transform', `translate(${6 + lift * 4},${5 + lift * 4})`);
+  }
+  function markMove(intensity) {
+    lastDrawMove = performance.now();
+    if (!actx) return;
+    penSound(true, drawTool === 'eraser' ? 1.2 + intensity * 0.3 : 0.5 + intensity * 0.5, drawTool === 'eraser');
+    soundActive = true;
+  }
+
+  function setDrawTool(t) {
+    drawTool = drawTool === t ? null : t;
+    $('toolPencil').classList.toggle('active', drawTool === 'pencil');
+    $('toolEraser').classList.toggle('active', drawTool === 'eraser');
+    $('toolPencil').setAttribute('aria-pressed', String(drawTool === 'pencil'));
+    $('toolEraser').setAttribute('aria-pressed', String(drawTool === 'eraser'));
+    paper.classList.toggle('drawing', !!drawTool);
+    pad.readOnly = !!drawTool;                          // 그림 그리는 동안 글자는 입력되지 않는다
+    pad.style.touchAction = drawTool ? 'none' : '';
+    pressed = false; curStroke = null;
+    if (drawTool) {
+      const all = [pen.mode !== 'idle' ? pen.task : null, ...queue];   // 쓰던 글씨는 즉시 마무리
+      queue.length = 0;
+      all.forEach(finishTask);
+      pen.mode = 'idle'; pen.erasing = false;
+      pencil.style.display = 'none'; eraser.style.display = 'none';  // 포인터가 종이 위에 올라오면 나타난다
+      mouseIn = false;
+    } else {
+      eraser.style.display = 'none';
+      pencil.style.display = pencilOn ? '' : 'none';
+      pshadow.setAttribute('transform', 'translate(10,8)');
+      eshadow.setAttribute('transform', 'translate(7,6)');
+      restPen();
+      pad.focus();
+    }
+    updateCaret();
+  }
+  $('toolPencil').addEventListener('click', () => setDrawTool('pencil'));
+  $('toolEraser').addEventListener('click', () => setDrawTool('eraser'));
+
+  pad.addEventListener('pointerdown', e => {
+    if (!drawTool || e.button !== 0) return;
+    audioInit();
+    try { pad.setPointerCapture(e.pointerId); } catch {}
+    pressed = true; mouseIn = true;
+    const p = unitsOf(e);
+    mouseUnits = p; lastMoveAt = performance.now();
+    if (drawTool === 'pencil') curStroke = makeStroke([[r1(p.x), r1(p.y)]]);
+    else eraseAt(p.x, p.y);
+    placeDrawTool(); markMove(0.5);
+  });
+  pad.addEventListener('pointermove', e => {
+    if (!drawTool) return;
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    const now = performance.now();
+    for (const ev of (evs.length ? evs : [e])) {
+      const p = unitsOf(ev), prev = mouseUnits;
+      mouseUnits = p; mouseIn = true;
+      if (!pressed) continue;
+      const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
+      if (drawTool === 'pencil' && curStroke) {          // 점 사이를 1.5 단위로 채워서 지울 때도 매끈하게
+        const last = curStroke.pts[curStroke.pts.length - 1];
+        const d = Math.hypot(p.x - last[0], p.y - last[1]);
+        const steps = Math.max(1, Math.ceil(d / 1.5));
+        for (let i = 1; i <= steps; i++) {
+          curStroke.pts.push([r1(last[0] + (p.x - last[0]) * i / steps), r1(last[1] + (p.y - last[1]) * i / steps)]);
+        }
+        updateStroke(curStroke);
+      } else if (drawTool === 'eraser') {
+        const steps = Math.max(1, Math.ceil(dist / 4));
+        for (let i = 1; i <= steps; i++) eraseAt(prev.x + (p.x - prev.x) * i / steps, prev.y + (p.y - prev.y) * i / steps);
+      }
+      const speed = dist / Math.max(8, now - lastMoveAt);          // 단위/ms
+      lastMoveAt = now;
+      markMove(Math.min(1, speed / 0.6));
+    }
+    placeDrawTool();
+  });
+  const endDraw = () => {
+    if (!drawTool || !pressed) return;
+    pressed = false;
+    if (curStroke && curStroke.pts.length === 1) updateStroke(curStroke);
+    curStroke = null;
+    saveDrawing();
+    placeDrawTool();
+  };
+  pad.addEventListener('pointerup', endDraw);
+  pad.addEventListener('pointercancel', endDraw);
+  pad.addEventListener('pointerenter', () => { if (drawTool) { mouseIn = true; placeDrawTool(); } });
+  pad.addEventListener('pointerleave', () => { if (drawTool && !pressed) { mouseIn = false; placeDrawTool(); } });
+
   // ───────── 이미지 만들기 / 저장 / 복사 ─────────
   const loadImg = src => new Promise((res, rej) => {
     const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src;
@@ -1466,7 +1663,9 @@
   // 지금 종이의 마지막 상태를 PNG로 렌더한다 (배율·모드·애니메이션 진행 상태와 무관하게)
   async function renderPng() {
     const W = layoutW;
-    const H = Math.min(layoutH, Math.max((rowsUsed + 1) * LH + MT + 10, 5 * LH + MT + 10));
+    let drawBottom = 0;
+    for (const st of strokesDraw) for (const pt of st.pts) if (pt[1] > drawBottom) drawBottom = pt[1];
+    const H = Math.min(layoutH, Math.max((rowsUsed + 1) * LH + MT + 10, 5 * LH + MT + 10, drawBottom + 24));
     let S = Math.max(1.5, 2 * Z);
     S = Math.min(S, 8000 / W, 12000 / H);                 // 캔버스 한계를 넘지 않게
     const clone = glyphs.cloneNode(true);
@@ -1483,7 +1682,7 @@
       `<rect width="${W}" height="${H}" fill="url(#grainPat)"/></mask>`;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
       `width="${W * S}" height="${H * S}" viewBox="0 0 ${W} ${H}"><style>${css}</style><defs>${defs}</defs>` +
-      `<g>${rules.innerHTML}</g>${new XMLSerializer().serializeToString(clone)}</svg>`;
+      `<g>${rules.innerHTML}</g>${new XMLSerializer().serializeToString(clone)}${new XMLSerializer().serializeToString(drawing)}</svg>`;
     const img = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
 
     const c = document.createElement('canvas');
@@ -1572,6 +1771,7 @@
   function clearAll() {
     queue.length = 0; tweens.clear();
     glyphs.replaceChildren();                       // 이전 글씨가 잠깐이라도 남지 않게 즉시 비운다
+    clearDrawing();
     board.querySelectorAll('defs clipPath').forEach(c => c.remove());
     slots = []; committed = []; prevChars = []; selSlots = []; freeSel = []; selAnchor = null;
     pad.value = '';
@@ -1704,7 +1904,7 @@
   const clearBtn = $('clear'), ball = $('ball'), sheet = $('sheet');
   clearBtn.addEventListener('click', () => {
     if (trashing) return;
-    if (!allItems().length) { clearBtn.classList.add('bump'); setTimeout(() => clearBtn.classList.remove('bump'), 400); pad.focus(); return; }
+    if (!allItems().length && !strokesDraw.length) { clearBtn.classList.add('bump'); setTimeout(() => clearBtn.classList.remove('bump'), 400); pad.focus(); return; }
     trashing = true;
     audioInit();
     const r = paper.getBoundingClientRect(), t = clearBtn.getBoundingClientRect();
@@ -1825,6 +2025,7 @@
     if (savedMode !== 'memo') setFree(true);
   }
   $('freeBtn').textContent = freeMode ? '자유 배치 켜짐' : '자유 배치 꺼짐';
+  loadDrawing();
   lastSig = sigNow();
   restPen();
   updateStats();
