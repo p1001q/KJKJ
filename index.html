@@ -13,6 +13,10 @@
     --paper: #f8f4ea;
     --ink: #34343b;
     --muted: #8a8478;
+    --rule: rgba(110,130,160,.38);       /* 줄 색 (종이 색에 따라 바뀜) */
+    --margin: rgba(210,110,110,.38);     /* 여백선 색 */
+    --pc-lead: #34343b;                  /* 연필 심 / 몸통 (펜 색에 따라 바뀜) */
+    --pc-body: #4a4a52; --pc-hi: #6c6c76; --pc-end: #5d5d66;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -30,7 +34,22 @@
     border-radius: 4px;
     box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 14px 34px rgba(0,0,0,.12);
   }
-  .sheet { max-width: 820px; margin: 0 auto; }
+  .sheet { position: relative; max-width: 820px; margin: 0 auto; }
+  /* 색 고르기: 왼쪽은 펜 색, 오른쪽은 종이 색 (좁은 화면에서는 종이 안쪽 가장자리로) */
+  .palette { position: absolute; top: 14px; display: flex; flex-direction: column; gap: 11px; z-index: 4; }
+  .palette-pen { right: calc(100% + 12px); }
+  .palette-paper { left: calc(100% + 12px); }
+  .dot {
+    width: 24px; height: 24px; border-radius: 50%; padding: 0; cursor: pointer;
+    background: var(--c); border: 2px solid rgba(0,0,0,.2); box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+  .dot:hover { transform: scale(1.1); }
+  .dot.on { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .sheet.shadowed .palette { opacity: 0; }
+  @media (max-width: 960px) {
+    .palette-pen { right: auto; left: 8px; }
+    .palette-paper { left: auto; right: 8px; }
+  }
   /* 구겨지는 동안: 종이 모양을 따라가는 그림자를 종이 바깥(래퍼)에 둬서 클립에 잘리지 않고 농도도 일정하다 */
   .sheet.shadowed { filter: drop-shadow(0 10px 14px rgba(70,55,30,.30)); }
   .sheet.shadowed .paper { box-shadow: none; }
@@ -48,8 +67,10 @@
   .fade .lead, .fade .hi { opacity: 0; }
   .erasing { transition: none !important; }
   .sel { opacity: .35; }
-  .rule { stroke: rgba(110,130,160,.38); stroke-width: 1; }
-  .margin { stroke: rgba(210,110,110,.38); stroke-width: 1; }
+  .rule { stroke: var(--rule); stroke-width: 1; }
+  .margin { stroke: var(--margin); stroke-width: 1; }
+  .pc-lead { fill: var(--pc-lead); } .pc-body { fill: var(--pc-body); } .pc-hi { fill: var(--pc-hi); } .pc-end { fill: var(--pc-end); }
+  #glyphs text { fill: var(--pen-text, #34343b); }
   .stats {   /* 편지지 바깥, 왼쪽 아래 모서리에 붙여서 */
     position: absolute; left: 4px; bottom: -32px; z-index: 1;
     font-size: 18px; color: rgba(105,95,72,.28); pointer-events: none; user-select: none;
@@ -148,12 +169,12 @@
         <polygon points="0,0 12,-3.2 30,-5.5 176,-5.5 176,5.5 30,5.5 12,3.2" fill="#000" transform="rotate(-62)"/>
       </g>
       <g transform="rotate(-62)">
-        <polygon points="0,0 12,-3.2 12,3.2" fill="#3a3a40"/>
+        <polygon class="pc-lead" points="0,0 12,-3.2 12,3.2" fill="#3a3a40"/>
         <polygon points="12,-3.2 32,-5.5 32,5.5 12,3.2" fill="#e8c9a0"/>
-        <rect x="32" y="-5.5" width="118" height="11" fill="#e2677a"/>
-        <rect x="32" y="-5.5" width="118" height="3" fill="#f08a99"/>
+        <rect class="pc-body" x="32" y="-5.5" width="118" height="11" fill="#e2677a"/>
+        <rect class="pc-hi" x="32" y="-5.5" width="118" height="3" fill="#f08a99"/>
         <rect x="150" y="-5.5" width="12" height="11" fill="#b9b9c0"/>
-        <rect x="162" y="-5.5" width="14" height="11" rx="3" fill="#f0a3ab"/>
+        <rect class="pc-end" x="162" y="-5.5" width="14" height="11" rx="3" fill="#f0a3ab"/>
       </g>
     </svg>
     <svg id="eraserTool" class="tool" width="1" height="1" style="display:none">
@@ -170,6 +191,8 @@
   <div class="caret" id="caret"></div>
   <textarea id="pad" spellcheck="false" autofocus aria-label="글 입력"></textarea>
 </div>
+  <div class="palette palette-pen" id="penPalette" role="radiogroup" aria-label="펜 색"></div>
+  <div class="palette palette-paper" id="paperPalette" role="radiogroup" aria-label="종이 색"></div>
 </div>
 
 <canvas id="ball" width="300" height="300"></canvas>
@@ -237,6 +260,20 @@
   let si = 2, userSpeed = 1;
   let pencilOn = true;
   let grainUrl = '';
+  // 펜 색 (검정이 기본). 빨강·파랑은 원색보다 살짝 어둡고 차분한 톤.
+  const PENS = [
+    { name: '검정', pen: '#34343b', body: '#4a4a52', hi: '#6c6c76', end: '#5d5d66' },
+    { name: '빨강', pen: '#a63a3a', body: '#b94a4a', hi: '#d77373', end: '#cf8484' },
+    { name: '파랑', pen: '#2f5c9e', body: '#3f6fb4', hi: '#7098d0', end: '#86a6d6' },
+  ];
+  // 종이 색 (아이보리가 기본). 노랑/하양은 리갈패드처럼: 파란 줄 + 빨간 이중 여백선.
+  // 리갈패드의 정확한 색 규격은 찾지 못해, 실물 사진 느낌에 맞춘 값입니다.
+  const THEMES = [
+    { name: '아이보리', paper: '#f8f4ea', rule: 'rgba(110,130,160,.38)', margin: 'rgba(210,110,110,.38)', dbl: false },
+    { name: '노랑',     paper: '#fff3a3', rule: 'rgba(92,146,206,.55)',  margin: 'rgba(214,72,72,.62)',  dbl: true },
+    { name: '하양',     paper: '#fdfdfb', rule: 'rgba(92,146,206,.5)',   margin: 'rgba(214,72,72,.58)',  dbl: true },
+  ];
+  let penIdx = 0, paperIdx = 0;
   let freeMode = true;                 // 종이 고정 모드
   let committed = [];                  // 종이 고정: 확정된 글자들 (좌표 고정)
   let anchor = { row: 0, x: ML };      // 종이 고정: 지금 쓰고 있는 자리
@@ -560,6 +597,7 @@
     const ld = el('path', { class: 'lead', pathLength: 1 });
     for (const p of [hi, ld]) p.style.strokeDasharray = '1 2';
     ld.style.opacity = (0.8 + Math.random() * 0.2).toFixed(2);
+    ld.style.stroke = PENS[slot.color || 0].pen;
     slot.g.append(hi, ld);
     const st = { kind: 'stroke', slot, role, hi, ld, tmpl: d, cur: null, jit: null, anim: null, prog: 0, dead: false, len: 0 };
     setProg(st, instant ? 1 : 0);
@@ -630,8 +668,19 @@
   function newSlot() {
     const g = el('g');
     glyphs.append(g);
-    return { g, ch: null, key: '', sig: '', parts: null, jamo: {}, text: null,
+    return { g, ch: null, key: '', sig: '', parts: null, jamo: {}, text: null, color: penIdx,
              rot: rnd(0.035), dy: rnd(1.2), ox: 0, oy: 0, row: 0 };
+  }
+
+  // 이미 쓴 글자의 색을 바꾼다 (저장된 글을 불러올 때, 모드를 바꿀 때)
+  function applySlotColor(slot, ci) {
+    slot.color = ci;
+    const c = PENS[ci].pen;
+    for (const role of Object.keys(slot.jamo)) for (const st of slot.jamo[role].strokes) st.ld.style.stroke = c;
+    if (slot.text) {
+      slot.text.penColor = c;
+      if (!slot.text.emoji) slot.text.node.setAttribute('fill', c);
+    }
   }
 
   function setSlot(slot, ch, instant) {
@@ -661,12 +710,12 @@
       const display = emoji && ch.length === 1 ? ch + '\uFE0F' : ch;
       const text = el('text', {
         'font-family': emoji ? EMOJI_FONT : 'Yeon Sung, cursive',
-        'font-size': emoji ? 34 : 38, fill: '#34343b',
+        'font-size': emoji ? 34 : 38, fill: PENS[slot.color || 0].pen,
       });
       text.textContent = display;
       group.append(text);
       slot.g.append(group);
-      slot.text = { kind: 'text', ch, display, emoji, group, clip, rect, node: text, x: 0, y: 0, w: advance(ch), prog: 0, dead: false };
+      slot.text = { kind: 'text', penColor: PENS[slot.color || 0].pen, ch, display, emoji, group, clip, rect, node: text, x: 0, y: 0, w: advance(ch), prog: 0, dead: false };
       if (instant) rect.setAttribute('width', 200); else queue.push(slot.text);
       return slot;
     }
@@ -799,7 +848,7 @@
   }
 
   function drawRules(W, H) {
-    const key = W + 'x' + H;
+    const key = W + 'x' + H + 'x' + paperIdx;
     if (key === lastRulesKey) return;
     lastRulesKey = key;
     const n = Math.floor((H - MT) / LH);
@@ -809,6 +858,7 @@
       html += `<line class="rule" x1="0" x2="${W}" y1="${y}" y2="${y}"/>`;
     }
     html += `<line class="margin" x1="${ML - 26}" x2="${ML - 26}" y1="0" y2="${H}"/>`;
+    if (THEMES[paperIdx].dbl) html += `<line class="margin" x1="${ML - 20}" x2="${ML - 20}" y1="0" y2="${H}"/>`;   // 리갈패드의 이중 여백선
     rules.innerHTML = html;
   }
 
@@ -1435,9 +1485,13 @@
     }
   }
   // 좌표로 흩어진 글자를 읽는 순서(위→아래, 왼쪽→오른쪽)의 글로 바꾼다
-  function freeText(list) {
+  function sortedFree(list) {
     const items = (list || allItems()).map((sl, i) => ({ sl, i, ...cellOf(sl) })).filter(o => o.sl.ch && o.sl.ch !== '\n');
     items.sort((a, b) => a.row - b.row || a.x - b.x || a.i - b.i);
+    return items;
+  }
+  function freeText(list) {
+    const items = sortedFree(list);
     const lines = [];
     let curRow = 0, line = '', cur = ML;
     for (const o of items) {
@@ -1454,10 +1508,14 @@
     if (freeMode) {
       const items = allItems().filter(sl => sl.ch && sl.ch !== '\n').map(sl => {
         const c = cellOf(sl);
-        return [sl.ch, Math.round(c.x * 10) / 10, c.row];
+        return [sl.ch, Math.round(c.x * 10) / 10, c.row, sl.color || 0];
       });
       store.set('items', JSON.stringify(items));
-    } else store.set('text', pad.value);
+    } else {
+      store.set('text', pad.value);
+      store.set('textColors', slots.map(sl => sl.color || 0).join(''));
+    }
+    lastEditKind = 'text';
   }
   function setFree(on) {
     if (on === freeMode) return;
@@ -1480,6 +1538,7 @@
     } else {             // 종이 고정 → 메모: 읽는 순서대로 글을 이어 붙여 다시 흘려 쓴다
       commitRun();
       const text = freeText();
+      const colorOrder = sortedFree().filter(o => o.sl.ch.trim()).map(o => o.sl.color || 0);   // 글자 순서대로 색을 이어 준다
       queue.length = 0; tweens.clear();
       glyphs.replaceChildren();
       committed = []; slots = []; prevChars = [];
@@ -1488,6 +1547,7 @@
       freeMode = false;
       pad.value = text;
       sync(text, true);
+      { let k = 0; for (const sl of slots) if (sl.ch.trim()) applySlotColor(sl, colorOrder[k++] || 0); }
       pad.setSelectionRange(pad.value.length, pad.value.length);
       lastSig = sigNow();
     }
@@ -1505,6 +1565,9 @@
   let drawTool = null;                 // null | 'pencil' | 'eraser'
   let strokesDraw = [];                // [{ pts: [[x, y]...], hi, ld }]
   let curStroke = null, pressed = false, lastDrawMove = 0, lastMoveAt = 0;
+  let drawDirty = false;               // 이번 드래그에서 지운 게 있는지
+  let lastEditKind = 'text';           // 'text' | 'draw' — 마지막으로 손댄 것 (Ctrl+Z가 무엇을 되돌릴지)
+  let drawHist = [], drawHistIdx = -1; // 그림 실행 취소 기록
   let mouseUnits = { x: 0, y: 0 }, mouseIn = false;
   const ERASE_R = 16;                  // 지우개 반경(종이 단위)
   let eraseMode = 'part';              // 'part': 닿은 부분만 / 'stroke': 닿은 획 통째로
@@ -1521,11 +1584,13 @@
     const l = pts[pts.length - 1];
     return d + `L${l[0]} ${l[1]}`;
   }
-  function makeStroke(pts) {
+  function makeStroke(pts, c) {
+    const ci = c === undefined ? penIdx : c;
     const hi = el('path', { class: 'hi' }), ld = el('path', { class: 'lead' });
     ld.style.opacity = (0.82 + Math.random() * 0.18).toFixed(2);
+    ld.style.stroke = PENS[ci].pen;
     drawing.append(hi, ld);
-    const st = { pts, hi, ld, bb: bbOf(pts) };
+    const st = { pts, c: ci, hi, ld, bb: bbOf(pts) };
     const d = pathOf(pts);
     hi.setAttribute('d', d); ld.setAttribute('d', d);
     strokesDraw.push(st);
@@ -1555,7 +1620,8 @@
       if (!hit.some(Boolean)) continue;
       removeStroke(st);
       let run = [];
-      const flush = () => { if (run.length >= 2) makeStroke(run); run = []; };
+      const flush = () => { if (run.length >= 2) makeStroke(run, st.c); run = []; };
+      drawDirty = true;
       st.pts.forEach((p, i) => { if (hit[i]) flush(); else run.push(p); });
       flush();
     }
@@ -1566,7 +1632,7 @@
     for (const st of strokesDraw.slice()) {
       const b = st.bb;
       if (x < b.x0 - R || x > b.x1 + R || y < b.y0 - R || y > b.y1 + R) continue;
-      if (st.pts.some(p => Math.hypot(p[0] - x, p[1] - y) <= R)) removeStroke(st);
+      if (st.pts.some(p => Math.hypot(p[0] - x, p[1] - y) <= R)) { removeStroke(st); drawDirty = true; }
     }
   }
   const eraseHere = (x, y) => (eraseMode === 'stroke' ? eraseStrokeAt(x, y) : eraseAt(x, y));
@@ -1580,17 +1646,42 @@
     setTimeout(() => {
       clearDrawing();
       drawing.style.transition = ''; drawing.style.opacity = '';
+      pushHist();
     }, 270);
   }
   function saveDrawing() {
-    store.set('drawing', JSON.stringify(strokesDraw.map(st => st.pts)));
+    store.set('drawing', JSON.stringify(strokesDraw.map(st => ({ c: st.c, p: st.pts }))));
   }
   function loadDrawing() {
     try {
       const arr = JSON.parse(store.get('drawing') || '[]');
-      if (Array.isArray(arr)) for (const pts of arr) if (Array.isArray(pts) && pts.length) makeStroke(pts);
+      if (Array.isArray(arr)) {
+        for (const o of arr) {
+          if (Array.isArray(o) && o.length) makeStroke(o, 0);                       // 이전 버전: 점 목록만
+          else if (o && Array.isArray(o.p) && o.p.length) makeStroke(o.p, o.c || 0);
+        }
+      }
     } catch {}
+    pushHist(true);
   }
+
+  // 그림 실행 취소 / 다시 실행: 동작이 끝날 때마다 그림 전체의 모양을 기록해 둔다
+  const snapDraw = () => strokesDraw.map(s => ({ c: s.c, pts: s.pts.map(p => [p[0], p[1]]) }));
+  function pushHist(initial) {
+    drawHist = drawHist.slice(0, drawHistIdx + 1);
+    drawHist.push(snapDraw());
+    if (drawHist.length > 80) drawHist.shift();
+    drawHistIdx = drawHist.length - 1;
+    if (!initial) lastEditKind = 'draw';
+  }
+  function restoreDraw(snap) {
+    drawing.replaceChildren();
+    strokesDraw = []; curStroke = null;
+    for (const o of snap) makeStroke(o.pts.map(p => [p[0], p[1]]), o.c);
+    saveDrawing();
+  }
+  function undoDraw() { if (drawHistIdx > 0) { drawHistIdx--; restoreDraw(drawHist[drawHistIdx]); return true; } return false; }
+  function redoDraw() { if (drawHistIdx < drawHist.length - 1) { drawHistIdx++; restoreDraw(drawHist[drawHistIdx]); return true; } return false; }
   function clearDrawing() {
     drawing.replaceChildren();
     strokesDraw = []; curStroke = null;
@@ -1676,6 +1767,17 @@
     eraseMenu.classList.remove('open');
   }));
   document.addEventListener('click', () => eraseMenu.classList.remove('open'));
+  // 그림 실행 취소(Ctrl/⌘+Z), 다시 실행(Ctrl/⌘+Shift+Z, Ctrl+Y). 글자는 기존처럼 입력창 기본 동작을 쓴다.
+  document.addEventListener('keydown', e => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || e.altKey) return;
+    const k = e.key.toLowerCase();
+    const isUndo = k === 'z' && !e.shiftKey, isRedo = (k === 'z' && e.shiftKey) || k === 'y';
+    if (!isUndo && !isRedo) return;
+    if (!drawTool && lastEditKind !== 'draw') return;     // 마지막으로 손댄 게 글자면 글자 쪽 기본 동작
+    e.preventDefault();
+    if (isUndo ? undoDraw() : redoDraw()) { audioInit(); tick('erase'); }
+  });
   document.addEventListener('keydown', e => {      // Esc: 그림 도구 끄기
     if (e.key === 'Escape' && drawTool) { eraseMenu.classList.remove('open'); setDrawTool(drawTool); }
   });
@@ -1687,6 +1789,7 @@
     pressed = true; mouseIn = true;
     const p = unitsOf(e);
     mouseUnits = p; lastMoveAt = performance.now();
+    drawDirty = false;
     if (drawTool === 'pencil') curStroke = makeStroke([[r1(p.x), r1(p.y)]]);
     else eraseHere(p.x, p.y);
     placeDrawTool(); markMove(0.5);
@@ -1722,8 +1825,10 @@
     if (!drawTool || !pressed) return;
     pressed = false;
     if (curStroke && curStroke.pts.length === 1) updateStroke(curStroke);
-    curStroke = null;
+    const changed = !!curStroke || drawDirty;
+    curStroke = null; drawDirty = false;
     saveDrawing();
+    if (changed) pushHist();
     placeDrawTool();
   };
   pad.addEventListener('pointerup', endDraw);
@@ -1747,9 +1852,10 @@
     clone.querySelectorAll('.fade,.erasing').forEach(n => n.remove());     // 지워지는 중인 획 제외
     clone.querySelectorAll('.sel').forEach(n => n.classList.remove('sel'));
     clone.querySelectorAll('.lead,.hi').forEach(n => { n.style.strokeDashoffset = '0'; });
+    const th = THEMES[paperIdx];
     const css = '.lead{fill:none;stroke:#34343b;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round}' +
       '.hi{fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transform:translate(.9px,.9px)}' +
-      '.rule{stroke:rgba(110,130,160,.38);stroke-width:1}.margin{stroke:rgba(210,110,110,.38);stroke-width:1}';
+      `.rule{stroke:${th.rule};stroke-width:1}.margin{stroke:${th.margin};stroke-width:1}`;
     const defs = `<pattern id="grainPat" patternUnits="userSpaceOnUse" width="128" height="128">` +
       `<image width="128" height="128" href="${grainUrl}" xlink:href="${grainUrl}"/></pattern>` +
       `<mask id="grainMask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">` +
@@ -1762,7 +1868,7 @@
     const c = document.createElement('canvas');
     c.width = Math.round(W * S); c.height = Math.round(H * S);
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#f8f4ea'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = th.paper; ctx.fillRect(0, 0, c.width, c.height);
     try {
       const m = /url\(["']?(.*?)["']?\)$/.exec(getComputedStyle(paper).backgroundImage);
       if (m) {
@@ -1777,7 +1883,7 @@
       const t = sl.text;
       if (!t) continue;
       ctx.globalAlpha = t.emoji ? 1 : 0.9;
-      ctx.fillStyle = '#34343b';
+      ctx.fillStyle = t.penColor || '#34343b';
       ctx.font = t.emoji ? `${34 * S}px ${EMOJI_FONT}` : `${38 * S}px "Yeon Sung", cursive`;
       ctx.fillText(t.display, t.x * S, t.y * S);
     }
@@ -1846,6 +1952,7 @@
     queue.length = 0; tweens.clear();
     glyphs.replaceChildren();                       // 이전 글씨가 잠깐이라도 남지 않게 즉시 비운다
     clearDrawing();
+    drawHist = []; drawHistIdx = -1; pushHist(true);
     board.querySelectorAll('defs clipPath').forEach(c => c.remove());
     slots = []; committed = []; prevChars = []; selSlots = []; freeSel = []; selAnchor = null;
     pad.value = '';
@@ -2066,6 +2173,36 @@
     $('grainImg').setAttribute('href', grainUrl);
   })();
 
+  // ───────── 펜 색 / 종이 색 ─────────
+  function applyPen() {
+    const p = PENS[penIdx], r = document.documentElement.style;
+    r.setProperty('--pc-lead', p.pen); r.setProperty('--pc-body', p.body);
+    r.setProperty('--pc-hi', p.hi); r.setProperty('--pc-end', p.end);
+    r.setProperty('--pen-text', p.pen);
+    document.querySelectorAll('#penPalette .dot').forEach((d, i) => { d.classList.toggle('on', i === penIdx); d.setAttribute('aria-checked', String(i === penIdx)); });
+  }
+  function applyPaper() {
+    const t = THEMES[paperIdx], r = document.documentElement.style;
+    r.setProperty('--paper', t.paper); r.setProperty('--rule', t.rule); r.setProperty('--margin', t.margin);
+    document.querySelectorAll('#paperPalette .dot').forEach((d, i) => { d.classList.toggle('on', i === paperIdx); d.setAttribute('aria-checked', String(i === paperIdx)); });
+    lastRulesKey = '';
+    if (layoutW) drawRules(layoutW, layoutH);
+  }
+  function buildPalettes() {
+    PENS.forEach((p, i) => {
+      const b = document.createElement('button');
+      b.className = 'dot'; b.style.setProperty('--c', p.pen); b.title = p.name + ' 펜'; b.setAttribute('role', 'radio'); b.setAttribute('aria-label', p.name + ' 펜');
+      b.addEventListener('click', () => { penIdx = i; store.set('pen', String(i)); applyPen(); pad.focus(); });
+      $('penPalette').append(b);
+    });
+    THEMES.forEach((t, i) => {
+      const b = document.createElement('button');
+      b.className = 'dot'; b.style.setProperty('--c', t.paper); b.title = t.name + ' 종이'; b.setAttribute('role', 'radio'); b.setAttribute('aria-label', t.name + ' 종이');
+      b.addEventListener('click', () => { paperIdx = i; store.set('paper', String(i)); applyPaper(); pad.focus(); });
+      $('paperPalette').append(b);
+    });
+  }
+
   // ───────── 시작 ─────────
   renderSound();
   const ss = parseInt(store.get('speed'), 10);
@@ -2075,6 +2212,11 @@
   if (zs >= 0 && zs < ZOOMS.length) zi = zs;
   Z = ZOOMS[zi];
   $('zoomLabel').textContent = Math.round(Z * 100) + '%';
+  { const a = parseInt(store.get('pen'), 10), b = parseInt(store.get('paper'), 10);
+    if (a >= 0 && a < PENS.length) penIdx = a;
+    if (b >= 0 && b < THEMES.length) paperIdx = b; }
+  buildPalettes();
+  applyPen(); applyPaper();
   pencilOn = store.get('pencil') !== 'off';
   $('pencilBtn').textContent = pencilOn ? '연필 켜짐' : '연필 꺼짐';
   if (!pencilOn) { pencil.style.display = 'none'; }
@@ -2084,6 +2226,7 @@
   if (savedMode !== 'memo' && Array.isArray(savedItems)) {
     for (const it of savedItems) {              // 종이 고정: 저장된 좌표 그대로 복원
       const sl = setSlot(null, it[0], true);
+      if (it[3]) applySlotColor(sl, it[3]);
       sl.fx = it[1]; sl.frow = it[2]; sl.free = true;
       committed.push(sl);
     }
@@ -2096,6 +2239,7 @@
     pad.setSelectionRange(pad.value.length, pad.value.length);
     layout(true);
     sync(saved, true);
+    { const cs = store.get('textColors') || ''; slots.forEach((sl, i) => { const c = +cs[i] || 0; if (c) applySlotColor(sl, c); }); }
     if (savedMode !== 'memo') setFree(true);
   }
   $('freeBtn').textContent = freeMode ? '자유 배치 켜짐' : '자유 배치 꺼짐';
