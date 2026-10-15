@@ -48,9 +48,9 @@
   .sel { opacity: .35; }
   .rule { stroke: rgba(110,130,160,.38); stroke-width: 1; }
   .margin { stroke: rgba(210,110,110,.38); stroke-width: 1; }
-  .stats {
-    position: absolute; left: 16px; bottom: 10px; z-index: 1;
-    font-size: 18px; color: #c6bca6; pointer-events: none; user-select: none;
+  .stats {   /* 편지지 바깥, 왼쪽 아래 모서리에 붙여서 */
+    position: absolute; left: 4px; bottom: -32px; z-index: 1;
+    font-size: 18px; color: rgba(105,95,72,.28); pointer-events: none; user-select: none;
   }
   .toolbar, .side {
     position: fixed; bottom: 18px; z-index: 5;
@@ -168,7 +168,7 @@
 <canvas id="ball" width="300" height="300"></canvas>
 
 <div class="toolbar">
-  <button id="freeBtn">종이 고정 켜짐</button>
+  <button id="freeBtn">자유 배치 켜짐</button>
   <button id="pencilBtn">연필 켜짐</button>
   <button id="sound">소리 켜짐</button>
   <div class="menuWrap">
@@ -398,50 +398,116 @@
     src.connect(bp).connect(hp).connect(g).connect(actx.destination);
     src.start(now, Math.random() * 0.5, dur + 0.02);
   }
-  // 종이 구기는 소리: 구겨지는 단계(0, 300, 600ms)마다 바삭하게 한 번씩, 820ms에 던지는 소리, 1270ms에 닿는 소리
+  // ───────── 종이 구기는 소리 / 버리는 소리 (샘플 페이지에서 확정한 조합) ─────────
+  // 구겨짐: 레퍼런스 mp3를 분석해 맞춘 합성. 아주 짧은(1~4ms) 클릭 수백 개가 1~6kHz 대역에서 불규칙하게 겹친다.
+  //   '부드럽게 (낮게) · 길게 부드럽게' — 0, 300, 600ms에 한 번씩 꽈직.
+  // 버림: '슉 · 바삭' — 820ms에 슉, 1270ms에 통 안에서 바삭.
+  const CRUMPLE_V = {
+    rate: 170, evDur: 0.22 * 1.15, skew: 1.2, sigma: 0.8, pLow: 0.35,
+    fcLow: 1360, fcHi: 3120, spread: 0.32, tauLo: 0.8 * 1.2, tauHi: 3.0 * 1.2, qLo: 0.8, qHi: 1.6,
+    lp: 5632, hp: 468,
+  };
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function synthCrumple(sr) {
+    const V = CRUMPLE_V, rnd = mulberry32(2005);          // 시드 고정: 언제 어디서 나도 같은 소리
+    const n = Math.floor(sr * 1.0), out = new Float32Array(n);
+    const gauss = () => (rnd() + rnd() + rnd() + rnd() - 2) * 1.732;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    for (const t0 of [0, 0.3, 0.6]) {
+      const cnt = Math.floor(V.rate * V.evDur);
+      for (let k = 0; k < cnt; k++) {
+        const pos = Math.pow(rnd(), V.skew);
+        const env = Math.pow(Math.sin(Math.PI * clamp(pos * 0.92 + 0.04, 0, 1)), 0.8);
+        const amp = 0.18 * Math.exp(gauss() * V.sigma) * (0.4 + 0.6 * env);
+        const fc = clamp((rnd() < V.pLow ? V.fcLow : V.fcHi) * Math.exp(gauss() * V.spread), 700, 9500);
+        const tau = (V.tauLo + rnd() * (V.tauHi - V.tauLo)) / 1000, q = V.qLo + rnd() * (V.qHi - V.qLo);
+        const L = Math.floor(Math.min(tau * 7, 0.03) * sr);
+        const i0 = Math.floor((t0 + pos * V.evDur) * sr);
+        if (L < 8 || i0 + L >= n) continue;
+        const w = 2 * Math.PI * fc / sr, r = Math.exp(-w / (2 * q));
+        const a1 = 2 * r * Math.cos(w), a2 = -r * r, b0 = 1 - r;
+        const decay = Math.exp(-1 / (sr * tau));
+        let y1 = 0, y2 = 0, e = amp;
+        for (let i = 0; i < L; i++) {
+          const y = b0 * gauss() + a1 * y1 + a2 * y2;
+          y2 = y1; y1 = y;
+          out[i0 + i] += y * e;
+          e *= decay;
+        }
+      }
+    }
+    let peak = 0;
+    for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+    const g = 0.55 / (peak || 1);
+    for (let i = 0; i < n; i++) out[i] *= g;
+    return out;
+  }
+
+  let crumpleBuf = null, sfxBus = null;
   function crumpleSound() {
     if (!actx || !soundOn || !noiseBuf) return;
-    const now = actx.currentTime + 0.02;
-    const crunch = (t, dur, vol, f) => {
-      const src = actx.createBufferSource();
-      src.buffer = noiseBuf; src.loop = true;
-      const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 0.7;
-      const g = actx.createGain();
-      g.gain.setValueAtTime(0, now + t);
-      for (let u = 0; u < dur; u += 0.012) {          // 바삭바삭 갈라지는 짧은 스파이크들
-        const spike = Math.random() < 0.35 ? 0.12 : 0.5 + Math.random() * 0.5;
-        g.gain.linearRampToValueAtTime(vol * spike, now + t + u + 0.005);
-        g.gain.linearRampToValueAtTime(vol * 0.06, now + t + u + 0.011);
-      }
-      g.gain.linearRampToValueAtTime(0, now + t + dur + 0.02);
-      src.connect(bp).connect(g).connect(actx.destination);
-      src.start(now + t, Math.random() * 1.5); src.stop(now + t + dur + 0.06);
-    };
-    crunch(0.00, 0.17, 0.26, 1150);
-    crunch(0.30, 0.19, 0.30, 950);
-    crunch(0.60, 0.12, 0.24, 1700);
-    // 푱: 위로 스치는 소리
+    if (!sfxBus) {                       // 갑자기 커지는 부분을 눌러 귀에 덜 거슬리게
+      const comp = actx.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.12;
+      sfxBus = actx.createGain(); sfxBus.gain.value = 0.9;
+      sfxBus.connect(comp).connect(actx.destination);
+    }
+    if (!crumpleBuf) {
+      const arr = synthCrumple(actx.sampleRate);
+      crumpleBuf = actx.createBuffer(1, arr.length, actx.sampleRate);
+      crumpleBuf.copyToChannel(arr, 0);
+    }
+    const now = actx.currentTime + 0.03;
+
+    // 꽈직 × 3
+    const src = actx.createBufferSource();
+    src.buffer = crumpleBuf;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = CRUMPLE_V.hp; hp.Q.value = 0.7;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = CRUMPLE_V.lp; lp.Q.value = 0.7;
+    src.connect(hp).connect(lp).connect(sfxBus);
+    src.start(now);
+
+    // 슉 (820ms)
+    const T = now + 0.82;
     const w = actx.createBufferSource();
     w.buffer = noiseBuf; w.loop = true;
-    const wb = actx.createBiquadFilter(); wb.type = 'bandpass'; wb.Q.value = 1.1;
-    wb.frequency.setValueAtTime(500, now + 0.82);
-    wb.frequency.exponentialRampToValueAtTime(2000, now + 1.06);
+    const wb = actx.createBiquadFilter(); wb.type = 'bandpass'; wb.Q.value = 0.9;
+    wb.frequency.setValueAtTime(500, T);
+    wb.frequency.exponentialRampToValueAtTime(1900, T + 0.2);
+    const wl = actx.createBiquadFilter(); wl.type = 'lowpass'; wl.frequency.value = 2800;
     const wg = actx.createGain();
-    wg.gain.setValueAtTime(0.0001, now + 0.82);
-    wg.gain.linearRampToValueAtTime(0.16, now + 0.9);
-    wg.gain.linearRampToValueAtTime(0.0001, now + 1.12);
-    w.connect(wb).connect(wg).connect(actx.destination);
-    w.start(now + 0.82); w.stop(now + 1.16);
-    // 톡: 쓰레기통에 닿는 소리
+    wg.gain.setValueAtTime(0.0001, T);
+    wg.gain.linearRampToValueAtTime(0.14, T + 0.07);
+    wg.gain.linearRampToValueAtTime(0.0001, T + 0.2);
+    w.connect(wb).connect(wl).connect(wg).connect(sfxBus);
+    w.start(T, 0.37); w.stop(T + 0.25);
+
+    // 바삭 (1270ms): 통 안에서 종이끼리 바삭 + 낮은 툭
+    const L = T + 0.45;
+    const tk = actx.createBufferSource(); tk.buffer = noiseBuf;
+    const tb = actx.createBiquadFilter(); tb.type = 'bandpass'; tb.frequency.value = 1100; tb.Q.value = 0.8;
+    const tl = actx.createBiquadFilter(); tl.type = 'lowpass'; tl.frequency.value = 1800;
+    const tg = actx.createGain();
+    tg.gain.setValueAtTime(0.12, L);
+    tg.gain.exponentialRampToValueAtTime(0.0001, L + 0.14);
+    tk.connect(tb).connect(tl).connect(tg).connect(sfxBus);
+    tk.start(L, 0.61); tk.stop(L + 0.17);
     const o = actx.createOscillator(), og = actx.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(230, now + 1.27);
-    o.frequency.exponentialRampToValueAtTime(110, now + 1.37);
-    og.gain.setValueAtTime(0.0001, now + 1.27);
-    og.gain.linearRampToValueAtTime(0.18, now + 1.28);
-    og.gain.exponentialRampToValueAtTime(0.0001, now + 1.39);
-    o.connect(og).connect(actx.destination);
-    o.start(now + 1.27); o.stop(now + 1.45);
+    o.frequency.setValueAtTime(160, L);
+    o.frequency.exponentialRampToValueAtTime(90, L + 0.1);
+    og.gain.setValueAtTime(0.0001, L);
+    og.gain.linearRampToValueAtTime(0.12, L + 0.008);
+    og.gain.exponentialRampToValueAtTime(0.0001, L + 0.1);
+    o.connect(og).connect(sfxBus);
+    o.start(L); o.stop(L + 0.13);
   }
 
   // ───────── 획 / 슬롯 관리 ─────────
@@ -940,7 +1006,8 @@
       total++;
       if (sl.ch.trim()) n++;
     }
-    stats.textContent = `공백 제외 ${n}자 · 공백 포함 ${total}자`;
+    // 종이 고정 모드에서는 공백이 좌표로 처리되므로 공백 제외 글자 수만 보여준다
+    stats.textContent = freeMode ? `공백 제외 ${n}자` : `공백 제외 ${n}자 · 공백 포함 ${total}자`;
   }
 
   // ───────── 선택 / 캐럿 ─────────
@@ -1385,7 +1452,7 @@
       pad.setSelectionRange(pad.value.length, pad.value.length);
       lastSig = sigNow();
     }
-    $('freeBtn').textContent = freeMode ? '종이 고정 켜짐' : '종이 고정 꺼짐';
+    $('freeBtn').textContent = freeMode ? '자유 배치 켜짐' : '자유 배치 꺼짐';
     layout(true);
     restPen();
     updateStats(); updateCaret(); persist();
@@ -1757,7 +1824,7 @@
     sync(saved, true);
     if (savedMode !== 'memo') setFree(true);
   }
-  $('freeBtn').textContent = freeMode ? '종이 고정 켜짐' : '종이 고정 꺼짐';
+  $('freeBtn').textContent = freeMode ? '자유 배치 켜짐' : '자유 배치 꺼짐';
   lastSig = sigNow();
   restPen();
   updateStats();
