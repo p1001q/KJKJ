@@ -37,9 +37,11 @@
   #board { display: block; width: 100%; overflow: visible; }
   #tools { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2; pointer-events: none; }
   .tool { position: absolute; left: 0; top: 0; overflow: visible; transform-origin: 0 0; will-change: transform; pointer-events: none; }
+  /* 숨은 입력창은 화면(뷰포트)에 고정한다. 종이 안에 두면 입력창 안의 캐럿 위치를 보이게 하려고
+     브라우저가 타이핑할 때마다 페이지를 위아래로 끌고 다닌다. */
   #pad {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    opacity: 0; border: 0; resize: none; font-size: 16px; cursor: text; overflow: hidden;
+    position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 1;
+    opacity: 0; border: 0; resize: none; font-size: 16px; cursor: default; overflow: hidden;
   }
   .lead { fill: none; stroke: var(--ink); stroke-width: 2.7; stroke-linecap: round; stroke-linejoin: round; transition: opacity .18s; }
   .hi   { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transform: translate(.9px,.9px); transition: opacity .18s; }
@@ -84,7 +86,6 @@
   /* 켜진 도구: 눌려 있는 것처럼 */
   .toolbar .tbtn.active { opacity: 1; background: rgba(70,56,30,.2); box-shadow: inset 0 2px 4px rgba(40,30,10,.35), inset 0 -1px 0 rgba(255,255,255,.5); }
   .sep { width: 1px; height: 24px; background: rgba(0,0,0,.14); margin: 0 6px; }
-  .paper.drawing #pad { cursor: none; }
   #clear { display: flex; align-items: center; }
   #clear svg { display: block; }
   #clear.bump svg { animation: bump .4s ease; }
@@ -901,10 +902,16 @@
   }
   function isDead(t) { return t.dead; }
 
+  let scrollGoal = null, scrollGoalAt = 0;
   function ensureVisible(y) {
     const top = paper.getBoundingClientRect().top + window.scrollY + y * Z;
     const bottom = window.scrollY + window.innerHeight - 140;
-    if (top > bottom) window.scrollTo({ top: top - window.innerHeight + 200, behavior: 'smooth' });
+    if (top <= bottom) return;
+    const goal = Math.round(top - window.innerHeight + 200);
+    const now = performance.now();
+    if (scrollGoal !== null && Math.abs(goal - scrollGoal) < 48 && now - scrollGoalAt < 700) return;
+    scrollGoal = goal; scrollGoalAt = now;
+    window.scrollTo({ top: goal, behavior: 'smooth' });
   }
 
   // 애니메이션 없이 완성 상태로 만든다 (연필 끄기, 지우기 등)
@@ -1096,9 +1103,16 @@
   }
   let dragging = false, dragAnchor = 0;
   pad.addEventListener('mousedown', e => e.preventDefault());   // 기본 캐럿/선택 대신 직접 처리
+  const onPaper = e => {
+    const r = paper.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  };
+  pad.addEventListener('pointermove', e => {
+    pad.style.cursor = onPaper(e) ? (drawTool ? 'none' : 'text') : 'default';
+  });
   pad.addEventListener('pointerdown', e => {
     audioInit();
-    if (e.button !== 0 || drawTool) return;
+    if (e.button !== 0 || drawTool || !onPaper(e)) return;
     if (freeMode) {      // 종이 위 어디를 눌러도 그 자리에서 쓴다
       const r = board.getBoundingClientRect();
       pad.focus();
@@ -1606,7 +1620,7 @@
   $('toolEraser').addEventListener('click', () => setDrawTool('eraser'));
 
   pad.addEventListener('pointerdown', e => {
-    if (!drawTool || e.button !== 0) return;
+    if (!drawTool || e.button !== 0 || !onPaper(e)) return;
     audioInit();
     try { pad.setPointerCapture(e.pointerId); } catch {}
     pressed = true; mouseIn = true;
@@ -1622,7 +1636,7 @@
     const now = performance.now();
     for (const ev of (evs.length ? evs : [e])) {
       const p = unitsOf(ev), prev = mouseUnits;
-      mouseUnits = p; mouseIn = true;
+      mouseUnits = p; mouseIn = pressed || onPaper(ev);
       if (!pressed) continue;
       const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
       if (drawTool === 'pencil' && curStroke) {          // 점 사이를 1.5 단위로 채워서 지울 때도 매끈하게
@@ -1653,7 +1667,6 @@
   };
   pad.addEventListener('pointerup', endDraw);
   pad.addEventListener('pointercancel', endDraw);
-  pad.addEventListener('pointerenter', () => { if (drawTool) { mouseIn = true; placeDrawTool(); } });
   pad.addEventListener('pointerleave', () => { if (drawTool && !pressed) { mouseIn = false; placeDrawTool(); } });
 
   // ───────── 이미지 만들기 / 저장 / 복사 ─────────
