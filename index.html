@@ -22,7 +22,7 @@
   html, body { margin: 0; }
   body {
     background: var(--desk);
-    padding: 24px 16px 96px;
+    padding: 24px 16px 150px;
     font-family: "Yeon Sung", cursive;
     color: var(--ink);
   }
@@ -71,10 +71,11 @@
   .margin { stroke: var(--margin); stroke-width: 1; }
   .pc-lead { fill: var(--pc-lead); } .pc-body { fill: var(--pc-body); } .pc-hi { fill: var(--pc-hi); } .pc-end { fill: var(--pc-end); }
   #glyphs text { fill: var(--pen-text, #34343b); }
-  .stats {   /* 편지지 바깥, 왼쪽 아래 모서리에 붙여서 */
-    position: absolute; left: 4px; bottom: -32px; z-index: 1;
+  .stats {   /* 편지지 바깥, 오른쪽 아래 모서리에 붙여서 */
+    position: absolute; right: 4px; bottom: -32px; z-index: 1;
     font-size: 18px; color: rgba(105,95,72,.28); pointer-events: none; user-select: none;
   }
+  @media (max-width: 900px) { .stats { right: auto; left: 4px; } }   /* 좁은 화면: 오른쪽 아래는 확대/속도 패널이 올라와 있어서 왼쪽으로 */
   .toolbar, .side {
     position: fixed; bottom: 18px; z-index: 5;
     background: rgba(248,244,234,.97);
@@ -837,7 +838,7 @@
         if (sl.frow + 1 > rowsUsed) rowsUsed = sl.frow + 1;
       }
     }
-    const H = Math.max(rowsUsed * LH + MT + 60, (window.innerHeight - 110) / Z);
+    const H = Math.max(rowsUsed * LH + MT + 60, (window.innerHeight - 150) / Z);
     layoutW = W; layoutH = H;
     board.setAttribute('height', H * Z);
     board.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -1088,8 +1089,8 @@
       total++;
       if (sl.ch.trim()) n++;
     }
-    // 종이 고정 모드에서는 공백이 좌표로 처리되므로 공백 제외 글자 수만 보여준다
-    stats.textContent = freeMode ? `공백 제외 ${n}자` : `공백 제외 ${n}자 · 공백 포함 ${total}자`;
+    // 자유 배치: (공백 제외) / 메모: (공백 제외 / 공백 포함)
+    stats.textContent = freeMode ? `(${n})` : `(${n} / ${total})`;
   }
 
   // ───────── 선택 / 캐럿 ─────────
