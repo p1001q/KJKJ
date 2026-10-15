@@ -43,7 +43,7 @@
 
 ### 초기 화면
 
-<img width="1000" alt="초기 화면 1" src="https://github.com/user-attachments/assets/d881f606-6ca4-4ed0-b28b-ae24c02bc651" />
+<img width="700" alt="초기 화면 1" src="https://github.com/user-attachments/assets/d881f606-6ca4-4ed0-b28b-ae24c02bc651" />
 <img width="700" alt="초기 화면 2" src="https://github.com/user-attachments/assets/398d5618-2861-45f4-8b45-c086956eaf8d" />
 
 ## 사용법
