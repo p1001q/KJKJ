@@ -398,7 +398,7 @@
     src.connect(bp).connect(hp).connect(g).connect(actx.destination);
     src.start(now, Math.random() * 0.5, dur + 0.02);
   }
-  // 종이 구기는 소리: 구겨지는 단계(0, 300, 600, 900ms)마다 바삭하게 한 번씩, 1120ms에 던지는 소리, 1570ms에 닿는 소리
+  // 종이 구기는 소리: 구겨지는 단계(0, 300, 600ms)마다 바삭하게 한 번씩, 820ms에 던지는 소리, 1270ms에 닿는 소리
   function crumpleSound() {
     if (!actx || !soundOn || !noiseBuf) return;
     const now = actx.currentTime + 0.02;
@@ -417,32 +417,31 @@
       src.connect(bp).connect(g).connect(actx.destination);
       src.start(now + t, Math.random() * 1.5); src.stop(now + t + dur + 0.06);
     };
-    crunch(0.00, 0.16, 0.22, 1500);
-    crunch(0.30, 0.17, 0.26, 1150);
-    crunch(0.60, 0.19, 0.30, 950);
-    crunch(0.90, 0.12, 0.24, 1700);
+    crunch(0.00, 0.17, 0.26, 1150);
+    crunch(0.30, 0.19, 0.30, 950);
+    crunch(0.60, 0.12, 0.24, 1700);
     // 푱: 위로 스치는 소리
     const w = actx.createBufferSource();
     w.buffer = noiseBuf; w.loop = true;
     const wb = actx.createBiquadFilter(); wb.type = 'bandpass'; wb.Q.value = 1.1;
-    wb.frequency.setValueAtTime(500, now + 1.12);
-    wb.frequency.exponentialRampToValueAtTime(2000, now + 1.36);
+    wb.frequency.setValueAtTime(500, now + 0.82);
+    wb.frequency.exponentialRampToValueAtTime(2000, now + 1.06);
     const wg = actx.createGain();
-    wg.gain.setValueAtTime(0.0001, now + 1.12);
-    wg.gain.linearRampToValueAtTime(0.16, now + 1.2);
-    wg.gain.linearRampToValueAtTime(0.0001, now + 1.42);
+    wg.gain.setValueAtTime(0.0001, now + 0.82);
+    wg.gain.linearRampToValueAtTime(0.16, now + 0.9);
+    wg.gain.linearRampToValueAtTime(0.0001, now + 1.12);
     w.connect(wb).connect(wg).connect(actx.destination);
-    w.start(now + 1.12); w.stop(now + 1.46);
+    w.start(now + 0.82); w.stop(now + 1.16);
     // 톡: 쓰레기통에 닿는 소리
     const o = actx.createOscillator(), og = actx.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(230, now + 1.57);
-    o.frequency.exponentialRampToValueAtTime(110, now + 1.67);
-    og.gain.setValueAtTime(0.0001, now + 1.57);
-    og.gain.linearRampToValueAtTime(0.18, now + 1.58);
-    og.gain.exponentialRampToValueAtTime(0.0001, now + 1.69);
+    o.frequency.setValueAtTime(230, now + 1.27);
+    o.frequency.exponentialRampToValueAtTime(110, now + 1.37);
+    og.gain.setValueAtTime(0.0001, now + 1.27);
+    og.gain.linearRampToValueAtTime(0.18, now + 1.28);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + 1.39);
     o.connect(og).connect(actx.destination);
-    o.start(now + 1.57); o.stop(now + 1.75);
+    o.start(now + 1.27); o.stop(now + 1.45);
   }
 
   // ───────── 획 / 슬롯 관리 ─────────
@@ -1670,18 +1669,17 @@
     paper.classList.add('crumple');
     crumpleSound();
 
-    // 구겨지는 건 단계마다 툭툭: 꽈직(0) · 꾸직(300) · 꽈직(600) · 꽉(900) → 푱(1120), 날아가는 건 휙 던지듯(0.45초)
+    // 구겨지는 건 단계마다 툭툭: 꾸직(0) · 꽈직(300) · 꽉(600) → 푱(820), 날아가는 건 휙 던지듯(0.45초)
     const stages = [
-      { at: 0,   f: 0.25, tf: 'scale(.9,.93) rotate(-2deg) skew(2deg,-1deg)', fl: 'brightness(.98)' },
-      { at: 300, f: 0.55, tf: 'scale(.74,.8) rotate(4deg) skew(-3deg,2deg)',  fl: 'brightness(.95) contrast(1.05)' },
-      { at: 600, f: 0.85, tf: 'scale(.6,.64) rotate(-3deg) skew(2deg,-2deg)', fl: 'brightness(.93) contrast(1.08)' },
-      { at: 900, f: 1,    tf: 'scale(.5) rotate(0deg)',                        fl: 'brightness(.92) contrast(1.1)' },
+      { at: 0,   f: 0.55, tf: 'scale(.74,.8) rotate(4deg) skew(-3deg,2deg)',  fl: 'brightness(.95) contrast(1.05)' },
+      { at: 300, f: 0.85, tf: 'scale(.6,.64) rotate(-3deg) skew(2deg,-2deg)', fl: 'brightness(.93) contrast(1.08)' },
+      { at: 600, f: 1,    tf: 'scale(.5) rotate(0deg)',                        fl: 'brightness(.92) contrast(1.1)' },
     ];
     stages.forEach((st, i) => setTimeout(() => {
       paper.style.transform = st.tf;
       paper.style.filter = st.fl;
       paper.style.clipPath = poly(st.f === 1 ? fin : mix(st.f));
-      drawWrinkles(wr, Math.min(i, 2));
+      drawWrinkles(wr, Math.min(i + 1, 2));
     }, st.at));
 
     setTimeout(() => {                         // 푱 — 같은 윤곽의 덩어리가 쓰레기통으로 날아간다
@@ -1696,7 +1694,7 @@
       paper.classList.remove('crumple');
       sheet.classList.remove('shadowed');
       clearAll();
-    }, 1120);
+    }, 820);
     setTimeout(() => {
       ball.style.display = 'none'; ball.classList.remove('fly');
       paper.style.visibility = '';
@@ -1706,7 +1704,7 @@
         paper.classList.remove('fresh'); clearBtn.classList.remove('bump');
         trashing = false; pad.focus();
       }, 420);
-    }, 1120 + 470);
+    }, 820 + 470);
   });
 
   // 디버깅/테스트용
