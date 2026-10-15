@@ -42,6 +42,7 @@
   .lead { fill: none; stroke: var(--ink); stroke-width: 2.7; stroke-linecap: round; stroke-linejoin: round; transition: opacity .18s; }
   .hi   { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transform: translate(.9px,.9px); transition: opacity .18s; }
   .fade .lead, .fade .hi { opacity: 0; }
+  .erasing { transition: none !important; }
   .rule { stroke: rgba(110,130,160,.38); stroke-width: 1; }
   .margin { stroke: rgba(210,110,110,.38); stroke-width: 1; }
   .toolbar {
@@ -51,7 +52,9 @@
     border-radius: 999px; padding: 6px 10px; font-size: 20px;
     box-shadow: 0 4px 16px rgba(0,0,0,.14);
   }
-  .toolbar span { color: var(--muted); padding: 0 10px; }
+  .toolbar { white-space: nowrap; max-width: calc(100vw - 16px); }
+  .toolbar span { color: var(--muted); padding: 0 8px; }
+  @media (max-width: 480px) { .toolbar { font-size: 17px; padding: 4px 6px; } .toolbar button { padding: 2px 8px; } }
   .toolbar button {
     font: inherit; color: var(--ink); background: transparent; border: 0;
     border-radius: 999px; padding: 2px 12px; cursor: pointer; opacity: .8;
@@ -88,6 +91,15 @@
         <rect x="162" y="-5.5" width="14" height="11" rx="3" fill="#f0a3ab"/>
       </g>
     </g>
+    <g id="eraserTool" style="pointer-events:none;display:none">
+      <g id="eshadow" opacity=".22" filter="url(#soft)">
+        <rect x="-22" y="-28" width="44" height="28" rx="5" fill="#000" transform="rotate(-16)"/>
+      </g>
+      <g id="ebody" transform="rotate(-16)">
+        <rect x="-22" y="-28" width="44" height="28" rx="5" fill="#f7f1e6" stroke="#d3c9b6"/>
+        <path d="M-22 -23 a5 5 0 0 1 5 -5 h34 a5 5 0 0 1 5 5 v13 h-44z" fill="#5f84d4"/>
+      </g>
+    </g>
   </svg>
   <div id="hint">여기에 천천히 적어보세요…</div>
   <textarea id="pad" spellcheck="false" autofocus aria-label="글 입력"></textarea>
@@ -95,6 +107,7 @@
 
 <div class="toolbar">
   <span id="count">0자</span>
+  <button id="zoomOut" aria-label="축소">−</button><span id="zoomLabel">100%</span><button id="zoomIn" aria-label="확대">+</button>
   <button id="sound">소리 켜짐</button>
   <button id="copy">복사</button>
   <button id="clear">지우기</button>
@@ -109,6 +122,8 @@
   const MT = 10;         // 위쪽 여백
   const NS = 'http://www.w3.org/2000/svg';
   const numRe = /-?\d*\.?\d+/g;
+  const ZOOMS = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 1.8];
+  let zi = 3, Z = 1;
 
   // ───────── 획 데이터 (0~100 상자, 획순대로) ─────────
   const S = {
@@ -234,6 +249,7 @@
   const paper = $('paper'), board = $('board'), glyphs = $('glyphs'), rules = $('rules');
   const pad = $('pad'), hint = $('hint'), count = $('count');
   const pencil = $('penTool'), pshadow = $('pshadow');
+  const eraser = $('eraserTool'), eshadow = $('eshadow');
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -257,12 +273,13 @@
     src.connect(nBand).connect(hp).connect(nGain).connect(actx.destination);
     src.start();
   }
-  function penSound(active, intensity = 1) {
+  function penSound(active, intensity = 1, low = false) {
     if (!actx || !nGain) return;
     const t = actx.currentTime;
     const g = (active && soundOn) ? (0.05 + Math.random() * 0.05) * intensity : 0;
     nGain.gain.setTargetAtTime(g, t, 0.015);
-    if (active) nBand.frequency.setTargetAtTime(2200 + Math.random() * 2600, t, 0.02);
+    const f = low ? 900 + Math.random() * 900 : 2200 + Math.random() * 2600;
+    if (active) nBand.frequency.setTargetAtTime(f, t, 0.02);
   }
 
   // ───────── 획 / 슬롯 관리 ─────────
@@ -296,9 +313,16 @@
     if (!instant) queue.push(st);
     return st;
   }
+  let batch = null;           // 삭제 입력 중 모은, 지우개로 지울 대상
   function killStroke(st) {
     st.dead = true;
     tweens.delete(st);
+    if (batch && st.prog >= 1 && !st.erasing) {
+      st.erasing = true;
+      st.hi.classList.add('erasing'); st.ld.classList.add('erasing');
+      batch.items.push({ kind: 'stroke', st });
+      return;
+    }
     st.hi.parentNode && st.hi.classList.add('fade');
     st.ld.classList.add('fade');
     setTimeout(() => { st.hi.remove(); st.ld.remove(); }, 220);
@@ -306,10 +330,47 @@
   function killJamo(j) { for (const st of j.strokes) killStroke(st); }
   function killText(slot) {
     if (!slot.text) return;
-    slot.text.dead = true;
-    slot.text.group.remove();
-    slot.text.clip.remove();
+    const t = slot.text;
+    t.dead = true;
     slot.text = null;
+    if (batch && t.prog >= 1) { batch.items.push({ kind: 'text', t }); return; }
+    t.group.remove();
+    t.clip.remove();
+  }
+
+  function finalizeBatch(b) {
+    const run = () => b.after.forEach(f => f());
+    if (!b.items.length) { run(); return; }
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    const els = [];
+    for (const it of b.items) {
+      if (it.kind === 'stroke') {
+        const a = it.st.cur || [];
+        for (let i = 0; i < a.length; i += 2) {
+          x0 = Math.min(x0, a[i]); x1 = Math.max(x1, a[i]);
+          y0 = Math.min(y0, a[i + 1]); y1 = Math.max(y1, a[i + 1]);
+        }
+        els.push({ el: it.st.hi, base: 0.7 }, { el: it.st.ld, base: +it.st.ld.style.opacity || 1 });
+      } else {
+        const t = it.t;
+        x0 = Math.min(x0, t.x); x1 = Math.max(x1, t.x + t.w);
+        y0 = Math.min(y0, t.y - G * 0.8); y1 = Math.max(y1, t.y);
+        els.push({ el: t.group, base: 1 });
+      }
+    }
+    const task = { kind: 'erase', items: b.items, els, after: b.after, dead: false, prog: 0, len: 0 };
+    if (b.items.length > 30 || x0 > x1) { eraseCleanup(task); return; }
+    if (x1 - x0 < 28) { const c = (x0 + x1) / 2; x0 = c - 14; x1 = c + 14; }
+    if (y1 - y0 < 20) { const c = (y0 + y1) / 2; y0 = c - 10; y1 = c + 10; }
+    task.bb = { x0: x0 - 6, y0: y0 - 6, x1: x1 + 6, y1: y1 + 6 };
+    queue.push(task);
+  }
+  function eraseCleanup(task) {
+    for (const it of task.items) {
+      if (it.kind === 'stroke') { it.st.hi.remove(); it.st.ld.remove(); }
+      else { it.t.group.remove(); it.t.clip.remove(); }
+    }
+    task.after.forEach(f => f());
   }
 
   function newSlot() {
@@ -325,12 +386,17 @@
     if (!slot) slot = newSlot();
     if (slot.ch === ch) return slot;
     slot.ch = ch;
+    if (slot.move) { slot.move.dead = true; slot.move = null; }
     const parts = decompose(ch);
 
     if (!parts) {
       for (const r of Object.keys(slot.jamo)) { killJamo(slot.jamo[r]); delete slot.jamo[r]; }
       slot.parts = null;
-      if (ch === ' ' || ch === '\n' || ch.trim() === '') { killText(slot); return slot; }
+      if (ch === ' ' || ch === '\n' || ch.trim() === '') {
+        killText(slot);
+        if (!instant) { slot.move = { kind: 'move', slot, dead: false }; queue.push(slot.move); }
+        return slot;
+      }
       killText(slot);
       const id = 'clip' + (++clipSeq);
       const clip = el('clipPath', { id });
@@ -365,8 +431,10 @@
     return slot;
   }
   function removeSlot(slot) {
+    if (slot.move) { slot.move.dead = true; slot.move = null; }
     for (const r of Object.keys(slot.jamo)) killJamo(slot.jamo[r]);
     killText(slot);
+    if (batch) { batch.after.push(() => slot.g.remove()); return; }
     slot.g.classList.add('fade');
     setTimeout(() => slot.g.remove(), 220);
   }
@@ -416,22 +484,29 @@
   }
 
   function layout(instant) {
-    const W = paper.clientWidth;
+    const W = paper.clientWidth / Z;      // 확대할수록 한 줄에 들어가는 폭(단위)이 줄어든다
     const maxX = W - ML - 28;
     let x = 0, row = 0;
+    const rowY = r => MT + r * LH + (LH - G) / 2 - 4;
     for (const slot of slots) {
-      if (slot.ch === '\n') { slot.row = row; x = 0; row++; continue; }
+      if (slot.ch === '\n') {
+        slot.row = row; slot.ox = ML + x; slot.oy = rowY(row);
+        x = 0; row++;
+        slot.nx = ML; slot.ny = rowY(row) + G * 0.55;
+        continue;
+      }
       const adv = advance(slot.ch);
       if (x + adv > maxX && x > 0) { x = 0; row++; }
       slot.row = row;
       slot.ox = ML + x + (adv - G) / 2;
-      slot.oy = MT + row * LH + (LH - G) / 2 - 4;
+      slot.oy = rowY(row);
+      slot.nx = ML + x + adv; slot.ny = slot.oy + G * 0.55;
       applyGeometry(slot, instant);
       x += adv;
     }
     rowsUsed = row + 1;
-    const H = Math.max(rowsUsed * LH + MT + 60, window.innerHeight - 110);
-    board.setAttribute('height', H);
+    const H = Math.max(rowsUsed * LH + MT + 60, (window.innerHeight - 110) / Z);
+    board.setAttribute('height', H * Z);
     board.setAttribute('viewBox', `0 0 ${W} ${H}`);
     drawRules(W, H);
     if (queue.length === 0 && pen.mode === 'idle' && slots.length === 0) restPen();
@@ -449,7 +524,8 @@
   }
 
   // ───────── 입력 반영 (공통 접두/접미를 빼고 바뀐 부분만 처리) ─────────
-  function sync(text, instant) {
+  function sync(text, instant, isDelete) {
+    batch = (isDelete && !instant) ? { items: [], after: [] } : null;
     const nc = Array.from(text), oc = prevChars;
     let p = 0;
     while (p < nc.length && p < oc.length && nc[p] === oc[p]) p++;
@@ -464,38 +540,59 @@
 
     slots = [...slots.slice(0, p), ...newMid, ...slots.slice(oc.length - s)];
     prevChars = nc;
+    const b = batch; batch = null;
+    if (b) finalizeBatch(b);
     layout(false);
+    // 공백·엔터를 지웠을 땐 지울 획이 없으니, 연필이 돌아온 끝자리로 이동
+    if (b && !b.items.length) queue.push({ kind: 'move', dead: false });
     hint.style.opacity = nc.length ? 0 : .55;
     count.textContent = nc.length + '자';
   }
 
   // ───────── 연필 ─────────
   const pen = { x: ML + G / 2, y: MT + LH * 0.7, mode: 'idle', task: null, t0: 0, dur: 0,
-                fx: 0, fy: 0, tx: 0, ty: 0, len: 0, lift: 0 };
-  function restPen() {
-    pen.x = ML + G / 2; pen.y = MT + LH * 0.7;
+                fx: 0, fy: 0, tx: 0, ty: 0, len: 0, lift: 0, erasing: false };
+  // 연필을 "다음에 쓸 자리"로 (확대/축소·리사이즈 후, 처음 상태)
+  function endPos() {
+    const s = slots[slots.length - 1];
+    if (!s) return { x: ML + G / 2, y: MT + LH * 0.7 };
+    if ((s.ch === ' ' || s.ch === '\n') && s.nx !== undefined) return { x: s.nx, y: s.ny };
+    return { x: s.ox + G * 0.9, y: s.oy + G * 0.6 };
   }
+  function restPen() { const p = endPos(); pen.x = p.x; pen.y = p.y; }
   const smooth = t => t * t * (3 - 2 * t);
   const lerp = (a, b, t) => a + (b - a) * t;
 
   function taskStart(t) {
+    if (t.kind === 'move') return t.slot ? { x: t.slot.nx, y: t.slot.ny } : endPos();
+    if (t.kind === 'erase') return { x: t.bb.x0, y: t.bb.y0 + (t.bb.y1 - t.bb.y0) * 0.2 };
     if (t.kind === 'text') return { x: t.x, y: t.y - 6 };
     return t.ld.getPointAtLength(0);
   }
   function taskLen(t) { return t.kind === 'text' ? t.w * 1.4 : t.ld.getTotalLength(); }
   function taskPoint(t, p) {
+    if (t.kind === 'erase') {
+      // 좌우로 삐꼭삐꼭 문지르며 천천히 내려간다
+      const { x0, y0, x1, y1 } = t.bb;
+      const u = p * (3 + Math.round((x1 - x0) / 50)) * 2;
+      const tri = 1 - Math.abs((u % 2) - 1);
+      return { x: x0 + tri * (x1 - x0), y: y0 + (0.2 + 0.6 * p) * (y1 - y0) };
+    }
     if (t.kind === 'text') return { x: t.x + p * t.w, y: t.y - 6 };
     return t.ld.getPointAtLength(p * t.len);
   }
   function taskSet(t, p) {
     t.prog = p;
-    if (t.kind === 'text') t.rect.setAttribute('width', p * (t.w + 6));
+    if (t.kind === 'erase') {
+      const e = smooth(Math.max(0, (p - 0.15) / 0.85));
+      for (const o of t.els) o.el.style.opacity = (o.base * (1 - e)).toFixed(3);
+    } else if (t.kind === 'text') t.rect.setAttribute('width', p * (t.w + 6));
     else setProg(t, p);
   }
   function isDead(t) { return t.dead; }
 
   function ensureVisible(y) {
-    const top = paper.getBoundingClientRect().top + window.scrollY + y;
+    const top = paper.getBoundingClientRect().top + window.scrollY + y * Z;
     const bottom = window.scrollY + window.innerHeight - 140;
     if (top > bottom) window.scrollTo({ top: top - window.innerHeight + 200, behavior: 'smooth' });
   }
@@ -517,6 +614,7 @@
       while (queue.length && isDead(queue[0])) queue.shift();
       if (queue.length) {
         const t = queue.shift(), s = taskStart(t);
+        if (t.kind === 'erase') { pen.x = s.x; pen.y = s.y; }
         pen.task = t; pen.fx = pen.x; pen.fy = pen.y; pen.tx = s.x; pen.ty = s.y;
         const dist = Math.hypot(pen.tx - pen.fx, pen.ty - pen.fy);
         pen.dur = dist < 2 ? 0 : (45 + Math.min(dist, 300) * 0.25) / speed;
@@ -530,12 +628,24 @@
         pen.x = lerp(pen.fx, pen.tx, smooth(k)); pen.y = lerp(pen.fy, pen.ty, smooth(k));
         pen.lift = Math.sin(k * Math.PI);
         if (k >= 1) {
-          pen.mode = 'draw'; pen.t0 = now; pen.lift = 0;
-          pen.len = taskLen(pen.task);
-          pen.task.len = pen.len;
-          pen.dur = (70 + pen.len * 2.6) / speed;
+          const t = pen.task;
+          pen.lift = 0;
           ensureVisible(pen.ty);
-          penSound(true, pen.task.kind === 'text' ? 0.8 : 1);
+          if (t.kind === 'move') { pen.mode = 'idle'; }
+          else {
+            pen.mode = 'draw'; pen.t0 = now;
+            if (t.kind === 'erase') {
+              pen.erasing = true;
+              pencil.style.display = 'none'; eraser.style.display = '';
+              pen.dur = (420 + t.items.length * 80) / speed;
+              penSound(true, 1.4, true);
+            } else {
+              pen.len = taskLen(t);
+              t.len = pen.len;
+              pen.dur = (70 + pen.len * 2.6) / speed;
+              penSound(true, t.kind === 'text' ? 0.8 : 1);
+            }
+          }
         }
       }
     } else if (pen.mode === 'draw') {
@@ -546,17 +656,28 @@
         taskSet(t, smooth(k));
         const pt = taskPoint(t, smooth(k));
         pen.x = pt.x; pen.y = pt.y;
-        if (actx) penSound(true, 0.7 + 0.5 * Math.min(1, speed / 2));
+        if (actx) penSound(true, (t.kind === 'erase' ? 1.2 : 0.7) + 0.5 * Math.min(1, speed / 2), t.kind === 'erase');
         if (k >= 1) {
           taskSet(t, 1);
           pen.mode = 'idle';
+          if (t.kind === 'erase') {
+            eraseCleanup(t);
+            pen.erasing = false;
+            eraser.style.display = 'none'; pencil.style.display = '';
+            pen.x = (t.bb.x0 + t.bb.x1) / 2; pen.y = (t.bb.y0 + t.bb.y1) / 2;
+          }
           if (!queue.length) penSound(false);
         }
       }
     }
 
-    pencil.setAttribute('transform', `translate(${pen.x.toFixed(1)},${(pen.y - pen.lift * 6).toFixed(1)})`);
-    pshadow.setAttribute('transform', `translate(${(10 + pen.lift * 6).toFixed(1)},${(8 + pen.lift * 6).toFixed(1)})`);
+    if (pen.erasing) {
+      eraser.setAttribute('transform', `translate(${pen.x.toFixed(1)},${pen.y.toFixed(1)})`);
+      eshadow.setAttribute('transform', 'translate(7,6)');
+    } else {
+      pencil.setAttribute('transform', `translate(${pen.x.toFixed(1)},${(pen.y - pen.lift * 6).toFixed(1)})`);
+      pshadow.setAttribute('transform', `translate(${(10 + pen.lift * 6).toFixed(1)},${(8 + pen.lift * 6).toFixed(1)})`);
+    }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -564,13 +685,28 @@
   // ───────── 이벤트 ─────────
   pad.addEventListener('keydown', audioInit, { once: true });
   pad.addEventListener('pointerdown', audioInit, { once: true });
-  pad.addEventListener('input', () => {
+  let delKey = false;
+  pad.addEventListener('keydown', e => { if (e.key === 'Backspace' || e.key === 'Delete') delKey = true; });
+  pad.addEventListener('keyup', () => { delKey = false; });
+  pad.addEventListener('input', e => {
     audioInit();
     if (actx && actx.state === 'suspended') actx.resume();
-    sync(pad.value, false);
+    const isDel = delKey || (e.inputType || '').startsWith('delete');
+    sync(pad.value, false, isDel);
     store.set('text', pad.value);
   });
-  window.addEventListener('resize', () => layout(true));
+  window.addEventListener('resize', () => { layout(true); if (pen.mode === 'idle' && !queue.length) restPen(); });
+
+  function setZoom(i) {
+    zi = Math.max(0, Math.min(ZOOMS.length - 1, i));
+    Z = ZOOMS[zi];
+    store.set('zoom', String(zi));
+    $('zoomLabel').textContent = Math.round(Z * 100) + '%';
+    layout(true);
+    if (pen.mode === 'idle' && !queue.length) restPen();
+  }
+  $('zoomIn').addEventListener('click', () => { setZoom(zi + 1); pad.focus(); });
+  $('zoomOut').addEventListener('click', () => { setZoom(zi - 1); pad.focus(); });
 
   const soundBtn = $('sound');
   function renderSound() { soundBtn.textContent = soundOn ? '소리 켜짐' : '소리 꺼짐'; }
@@ -596,6 +732,10 @@
 
   pencil.setAttribute('transform', `translate(${pen.x},${pen.y})`);
   renderSound();
+  const zs = parseInt(store.get('zoom'), 10);
+  if (zs >= 0 && zs < ZOOMS.length) zi = zs;
+  Z = ZOOMS[zi];
+  $('zoomLabel').textContent = Math.round(Z * 100) + '%';
   const saved = store.get('text') || '';
   pad.value = saved;
   layout(true);
